@@ -1,0 +1,26 @@
+// File: index.js (HTTP trigger)
+// Validation: returns ?validationToken plain-text within 10s (Graph requirement)
+// Notifications: 202 fast; add your sender-filter + forward later
+
+module.exports = async function (context, req) {
+  // 1) Graph validation handshake
+  const token = req.query.validationToken || (req.query && req.query['validationtoken']);
+  if (token) {
+    context.res = {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+      body: token
+    };
+    return;
+  }
+
+  // 2) Normal notifications (POST)
+  let body = {};
+  try { body = req.body || {}; } catch {}
+  const notifications = Array.isArray(body.value) ? body.value : [];
+
+  // TODO: fetch the message via Graph (app-only token), filter by sender, forward to Processing Function
+  // Keep this lightweight and ACK quickly:
+  context.log(`Received ${notifications.length} notification(s)`);
+  context.res = { status: 202 };
+};
