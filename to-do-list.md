@@ -5,6 +5,7 @@
 - ✓ Create function.json with HTTP trigger bindings
 - ✓ Create index.js with Graph validation and notification handling
 - ✓ Create host.json in repo root
+- ✓ Create GitHub Actions workflow for Azure Functions deployment
 
 ## Next Steps
 - Push to main branch and configure Deployment Center
