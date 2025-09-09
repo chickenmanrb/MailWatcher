@@ -85,20 +85,25 @@ const server = http.createServer(async (req, res) => {
         if (!provided || String(provided) !== SECRET) return bad(res, 401, 'unauthorized');
       }
 
-      const data = await parseJson(req);
+      let data: any = await parseJson(req);
+      if (Array.isArray(data)) data = data[0] || {};
 
       // Map Zapier payload to DealIngestionJob
+      const sp = data.sharepoint || {};
       const job: DealIngestionJob = {
         task_name: data.task_name || data.taskName || data.subject || 'zapier-job',
         notion_page_id: data.notion_page_id || data.notionPageId,
-        nda_url: data.nda_url || data.ndaUrl,
-        dealroom_url: data.dealroom_url || data.dealroomUrl,
-        sharepoint_folder_webUrl: data.sharepoint_folder_webUrl || data.sharepointFolderUrl || data.sharepointFolderWebUrl,
+        // Prefer explicit NDA and dealroom links from Zapier
+        nda_url: data.nda_link || data.nda_url || data.ndaUrl,
+        dealroom_url: data.dealroom_link || data.dealroom_url || data.dealroomUrl,
+        // Accept nested sharepoint.drive_id or dotted key fallback
+        sharepoint_folder_webUrl: sp.drive_id || data['sharepoint.drive_id'] || data.sharepoint_folder_webUrl || data.sharepointFolderUrl || data.sharepointFolderWebUrl,
+        sharepoint_folder_id: sp.id || data.sharepoint_id,
         email_body: data.email_body || data.emailBody || data.body_html || data.body
       };
 
       // Minimal required field
-      if (!job.sharepoint_folder_webUrl) return bad(res, 422, 'sharepoint_folder_webUrl required');
+      if (!job.sharepoint_folder_webUrl && !job.sharepoint_folder_id) return bad(res, 422, 'sharepoint folder reference required');
 
       // Enqueue and return fast
       enqueue(job);
@@ -115,4 +120,3 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`[webhook] listening on :${PORT}`);
 });
-

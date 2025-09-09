@@ -15,7 +15,8 @@ import type { DealIngestionJob } from './types.js';
 async function run(job: DealIngestionJob) {
   console.log('Starting job:', job.task_name);
   const ndalink = job.nda_url ?? (job.notion_page_id ? await fetchNdaUrl(job.notion_page_id) : undefined);
-  const candidateUrls = [job.dealroom_url, ndalink, job.sharepoint_folder_webUrl, ...extractLinks(job.email_body || '')]
+  // Prefer NDA link first so we complete confidentiality and auto-navigate into the deal room if a popup occurs.
+  const candidateUrls = [ndalink, job.dealroom_url, job.sharepoint_folder_webUrl, ...extractLinks(job.email_body || '')]
     .filter(Boolean) as string[];
 
   const detection = detectPlatform(candidateUrls);
