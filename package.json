@@ -1,0 +1,34 @@
+{
+  "name": "playwright-deal-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/src/webhook/server.js",
+    "dev": "tsx src/index.ts",
+    "webhook": "tsx src/webhook/server.ts",
+    "worker": "tsx src/worker/queueWorker.ts"
+  },
+  "dependencies": {
+    "@azure/storage-queue": "^12.15.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@notionhq/client": "^2.2.14",
+    "adm-zip": "^0.5.12",
+    "dotenv": "^16.4.5",
+    "got": "^14.4.1",
+    "mime-types": "^2.1.35",
+    "p-limit": "^6.1.0",
+    "playwright": "^1.47.2",
+    "tslib": "^2.7.0",
+    "winston": "^3.14.2",
+    "yargs": "^17.7.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/adm-zip": "^0.5.7",
+    "@types/mime-types": "^3.0.1",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}
