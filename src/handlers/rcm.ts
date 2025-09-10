@@ -1,8 +1,17 @@
+// - RCM_ENTRY_GET_ACCESS:                                                                                                                                                                                                                                                                               
+//   - Get Access → Main CA → Dealroom                                                                                                                                                                                                                                                                 
+// - RCM_ENTRY_SAL_JAFAR:                                                                                                                                                                                                                                                                                
+//    - Main CA → Not Sal Jafar → Main CA → Dealroom                                                                                                                                                                                                                                                    
+// - RCM_ENTRY_MAIN_CA:                                                                                                                                                                                                                                                                                  
+//    - Main CA → Dealroom                                                                                                                                                                                                                                                                              
+                                          
 import type { Page } from 'playwright';
 import { clickDownloadAll, enumerateFileLinks } from '../browser/download.js';
 import type { DealIngestionJob } from '../types.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+
+type RcmEntryKind = 'RCM_ENTRY_SAL_JAFAR' | 'RCM_ENTRY_MAIN_CA' | 'RCM_ENTRY_GET_ACCESS';
 
 export async function handleRcm(page: Page, ctx: { job: DealIngestionJob; workingDir: string; urls: string[] }) {
   console.log('RCM Handler: Processing URLs:', ctx.urls);
@@ -19,29 +28,50 @@ export async function handleRcm(page: Page, ctx: { job: DealIngestionJob; workin
 
   // Take screenshot before any interaction
   await page.screenshot({ path: 'runs/rcm-before-interaction.png' }).catch(()=>{});
-  
+
   // STEP 1: Check for Sal Jafar user selection FIRST
+  let entryKind: RcmEntryKind = 'RCM_ENTRY_MAIN_CA';
   const hadSalJafar = await handleSalJafarSelection(page);
-  
+
   // If we had Sal Jafar selection, wait for navigation and take new screenshot
   if (hadSalJafar) {
+    entryKind = 'RCM_ENTRY_SAL_JAFAR';
     await page.waitForLoadState('networkidle').catch(()=>{});
     await page.screenshot({ path: 'runs/rcm-after-sal-jafar.png' }).catch(()=>{});
     console.log('RCM Handler: After Sal Jafar selection, current URL:', page.url());
   }
   
+  // STEP 1.5: "Get Access" form page entry (alternate NDA/consent form)
+  if (!hadSalJafar) {
+    const alt = await tryGetAccessEntry(page);
+    if (alt) {
+      entryKind = 'RCM_ENTRY_GET_ACCESS';
+      await page.waitForLoadState('networkidle').catch(()=>{});
+      await page.screenshot({ path: 'runs/rcm-after-get-access.png' }).catch(()=>{});
+      console.log('RCM Handler: Get Access entry handled; current URL:', page.url());
+    }
+  }
+
+  // If we still didn't detect the other two paths, we assume main CA entry
+  if (!hadSalJafar && entryKind !== 'RCM_ENTRY_GET_ACCESS') {
+    entryKind = 'RCM_ENTRY_MAIN_CA';
+  }
+
+  // Persist entry kind for audit/debug
+  try {
+    await fs.writeFile(path.join(ctx.workingDir, 'rcm-entry.txt'), entryKind, 'utf8');
+  } catch {}
+  console.log('RCM Handler: Entry kind =', entryKind);
+
   // STEP 2: Handle user info form if present
   await handleUserInfoForm(page);
   
-  // STEP 3: Handle checkboxes (avoiding 1031 exchange)
+  // STEP 3: Handle checkboxes (avoiding 1031 exchange) once more, just in case
   console.log('RCM Handler: Looking for checkboxes to check...');
   await handleAllCheckboxes(page);
-  
-  // STEP 4: Click I Agree button
-  console.log('RCM Handler: Looking for I Agree button...');
-  await clickIfExists(page, 'button:has-text("I Agree"), button:has-text("Accept")');
-  await clickIfExists(page, 'button:has-text("Continue"), button:has-text("Proceed")');
-  await page.waitForTimeout(2000); // Wait for navigation
+
+  // STEP 3.5: Reset validation (blur + outside click) before any submit/continue
+  await tryAdvanceFromMainCa(page);
 
   // Take screenshot after NDA
   await page.screenshot({ path: 'runs/rcm-after-nda.png' }).catch(()=>{});
@@ -176,7 +206,7 @@ async function handleUserInfoForm(page: Page) {
         'input[placeholder*="name" i]:not([placeholder*="first" i]):not([placeholder*="last" i]):not([placeholder*="company" i])',
         'input[id*="name" i]:not([id*="first" i]):not([id*="last" i]):not([id*="company" i])'
       ], 
-      value: process.env.USER_NAME || 'W. Ross Cromartie' 
+      value: process.env.USER_NAME || '' 
     },
     // Email
     { 
@@ -185,7 +215,7 @@ async function handleUserInfoForm(page: Page) {
         'input[placeholder*="email" i]',
         'input[id*="email" i]'
       ], 
-      value: process.env.USER_EMAIL || 'wcromartie@Orhlp.com' 
+      value: process.env.USER_EMAIL || '' 
     },
     // Company
     { 
@@ -194,7 +224,7 @@ async function handleUserInfoForm(page: Page) {
         'input[placeholder*="company" i], input[placeholder*="organization" i]',
         'input[id*="company" i], input[id*="organization" i]'
       ], 
-      value: process.env.COMPANY_NAME || 'Odyssey Residential Holdings' 
+      value: process.env.USER_COMPANY || '' 
     },
     // Phone
     { 
@@ -203,7 +233,7 @@ async function handleUserInfoForm(page: Page) {
         'input[placeholder*="phone" i], input[placeholder*="mobile" i]',
         'input[id*="phone" i], input[id*="mobile" i]'
       ], 
-      value: process.env.USER_PHONE || '972-478-0485' 
+      value: process.env.USER_PHONE || '' 
     },
     // Title
     { 
@@ -212,7 +242,7 @@ async function handleUserInfoForm(page: Page) {
         'input[placeholder*="title" i], input[placeholder*="position" i]',
         'input[id*="title" i], input[id*="position" i]'
       ], 
-      value: process.env.USER_TITLE || 'Acquisitions Analyst' 
+      value: process.env.USER_TITLE || '' 
     },
     // Role/Industry Role
     { 
@@ -222,7 +252,7 @@ async function handleUserInfoForm(page: Page) {
         'input[id*="role" i], input[id*="industry" i]',
         'select[name*="role" i], select[name*="industry" i]'
       ], 
-      value: process.env.USER_INDUSTRY_ROLE || 'Principal' 
+      value: process.env.USER_INDUSTRY_ROLE || '' 
     },
     // Address
     { 
@@ -231,7 +261,7 @@ async function handleUserInfoForm(page: Page) {
         'input[placeholder*="address" i], input[placeholder*="street" i]',
         'input[id*="address" i], input[id*="street" i]'
       ], 
-      value: process.env.USER_ADDRESS || '13760 Noel Rd. STE 1000 Dallas, TX 75240' 
+      value: process.env.USER_ADDRESS || '' 
     }
   ];
   
@@ -273,11 +303,9 @@ async function handleUserInfoForm(page: Page) {
     }
   }
   
-  if (filledAnyField) {
-    // Look for and check any required checkboxes after filling the form
-    console.log('RCM Handler: Form filled, checking for required checkboxes...');
-    await handleFormCheckboxes(page);
-  }
+  // Always check form checkboxes even if fields were prefilled
+  console.log('RCM Handler: Checking required form checkboxes...');
+  await handleFormCheckboxes(page);
 }
 
 async function handleFormCheckboxes(page: Page) {
@@ -435,3 +463,255 @@ async function clickIfExists(page: Page, selector: string) {
   }
 }
 
+// --- "Get Access" entry helpers (JS-driven, frame-aware) ---
+async function tryGetAccessEntry(page: Page) {
+  try {
+    const gate = await page.$('text=/I\\s*Agree|Accept|Confidential|Confidentiality|Non[-\\s]?Disclosure|NDA/i');
+    const anyCheckbox = await page.$('input[type="checkbox"], [role="checkbox"]');
+    if (!gate && !anyCheckbox) return false;
+
+    console.log('RCM Handler: Attempting "Get Access" entry (NDA/consent)...');
+    await ensureAgreementChecked(page);
+    await blurAndTriggerValidation(page);
+    const hasErrors = await hasValidationErrors(page);
+    if (hasErrors) {
+      console.log('RCM Handler: Validation errors present; skipping auto-submit');
+      return true; // handled but cannot submit
+    }
+
+    // Click likely submit/continue using JS  
+    let submitted = await jsClickByText(page, ['Submit', 'Continue', 'Request Access', 'Get Access', 'Proceed']);
+    if (!submitted) {
+      submitted = await jsClickSelector(page, [
+        'button[type="submit"], input[type="submit"]',
+        'button:has-text("Submit")',
+        'button:has-text("Continue")',
+        'button:has-text("Request Access")',
+        'button:has-text("Get Access")'
+      ]);
+    }
+    if (submitted) {
+      await page.waitForLoadState('networkidle').catch(()=>{});
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+async function ensureAgreementChecked(page: Page) {
+  const patterns = /(i\\s*agree|accept|terms|privacy|nda|confidential|confidentiality|non[-\\s]?disclosure|consent)/i;
+  // Obvious checkboxes by selector
+  await jsSetCheckbox(page, [
+    'input[type="checkbox"][name*="agree" i]',
+    'input[type="checkbox"][id*="agree" i]',
+    'input[type="checkbox"][name*="terms" i]',
+    'input[type="checkbox"][id*="terms" i]',
+    'input[type="checkbox"][name*="confidential" i]',
+    'input[type="checkbox"][id*="confidential" i]'
+  ]);
+  // Labels and ARIA
+  for (const frame of page.frames()) {
+    await frame.evaluate((patStr: string) => {
+      const pat = new RegExp(patStr, 'i');
+      const boxes = Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')) as (HTMLInputElement | HTMLElement)[];
+      for (const box of boxes) {
+        let labelTxt = '';
+        const input = box as HTMLInputElement;
+        const id = input.id;
+        const byFor = id ? document.querySelector(`label[for="${id}"]`) as HTMLLabelElement | null : null;
+        if (byFor && byFor.innerText) labelTxt += ' ' + byFor.innerText;
+        const closestLabel = box.closest('label') as HTMLLabelElement | null;
+        if (closestLabel && closestLabel.innerText) labelTxt += ' ' + closestLabel.innerText;
+        const aria = (box.getAttribute('aria-label') || '') + ' ' + (box.getAttribute('aria-labelledby') || '');
+        labelTxt += ' ' + aria + ' ' + (box.parentElement?.textContent || '');
+        if (pat.test(labelTxt)) {
+          try {
+            if ((box as HTMLInputElement).tagName === 'INPUT') {
+              const cb = box as HTMLInputElement;
+              if (!cb.checked) {
+                cb.checked = true;
+                cb.dispatchEvent(new Event('input', { bubbles: true }));
+                cb.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            } else if (box.getAttribute('role') === 'checkbox') {
+              if (box.getAttribute('aria-checked') !== 'true') {
+                box.setAttribute('aria-checked', 'true');
+                box.dispatchEvent(new Event('input', { bubbles: true }));
+                box.dispatchEvent(new Event('change', { bubbles: true }));
+                box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+              }
+            }
+          } catch {}
+        }
+      }
+      const labels = Array.from(document.querySelectorAll('label')) as HTMLLabelElement[];
+      for (const lb of labels) {
+        const txt = (lb.innerText || lb.textContent || '').trim();
+        if (txt && pat.test(txt)) {
+          try {
+            lb.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            (lb as HTMLElement).click?.();
+          } catch {}
+        }
+      }
+    }, patterns.source).catch(() => {});
+  }
+}
+
+async function blurAndTriggerValidation(page: Page) {
+  for (const frame of page.frames()) {
+    await frame.evaluate(() => {
+      const fields = Array.from(document.querySelectorAll('input, textarea, select')) as HTMLElement[];
+      for (const el of fields) {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+      }
+      (document.activeElement as HTMLElement | null)?.blur?.();
+    }).catch(()=>{});
+  }
+  try { await page.mouse.click(2, 2); } catch {}
+  await page.waitForTimeout(300);
+}
+
+async function hasValidationErrors(page: Page) {
+  for (const frame of page.frames()) {
+    const anyErrors = await frame.evaluate(() => {
+      const collectText = (sel: string) => Array.from(document.querySelectorAll(sel)).map(e => (e as HTMLElement).innerText || (e as HTMLElement).textContent || '').map(s => s.trim()).filter(Boolean);
+      const messages: string[] = [];
+      const push = (arr: string[]) => { for (const s of arr) if (s) messages.push(s); };
+      push(collectText('[role="alert"]'));
+      push(collectText('.error, .errors, .invalid-feedback, .validation-error, .field-error, .help-block, .ant-form-item-explain-error, .MuiFormHelperText-root.Mui-error, .error-message'));
+      const inputs = Array.from(document.querySelectorAll('input, textarea, select')) as (HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)[];
+      for (const el of inputs) {
+        const ai = el.getAttribute('aria-invalid');
+        const bad = ai === 'true' || (typeof (el as any).checkValidity === 'function' && !(el as any).checkValidity());
+        if (bad) return true;
+      }
+      return messages.length > 0;
+    }).catch(()=>false);
+    if (anyErrors) return true;
+  }
+  return false;
+}
+
+async function jsSetCheckbox(page: Page, selectors: string[]) {
+  for (const frame of page.frames()) {
+    for (const sel of selectors) {
+      const did = await frame.evaluate((s) => {
+        const el = document.querySelector(s) as HTMLInputElement | null;
+        if (!el) return false;
+        try {
+          if (el.type === 'checkbox') {
+            el.checked = true;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          }
+        } catch {}
+        return false;
+      }, sel).catch(() => false);
+      if (did) return true;
+    }
+  }
+  return false;
+}
+
+async function jsClickSelector(page: Page, selectors: string[]) {
+  for (const frame of page.frames()) {
+    for (const sel of selectors) {
+      const el = await frame.$(sel);
+      if (!el) continue;
+      const ok = await frame.evaluate((node: Element) => {
+        try {
+          (node as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'center' });
+          const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+          node.dispatchEvent(evt);
+          (node as HTMLElement).click?.();
+          return true;
+        } catch { return false; }
+      }, el).catch(() => false);
+      if (ok) return true;
+    }
+  }
+  return false;
+}
+
+async function jsClickByText(page: Page, texts: string[]) {
+  for (const frame of page.frames()) {
+    const ok = await frame.evaluate((needles: string[]) => {
+      const candidates = Array.from(document.querySelectorAll('button, a, label, input[type="button"], input[type="submit"]')) as HTMLElement[];
+      for (const n of needles) {
+        const re = new RegExp(n, 'i');
+        for (const el of candidates) {
+          const txt = (el.innerText || el.textContent || '').trim();
+          if (txt && re.test(txt)) {
+            try {
+              el.scrollIntoView?.({ block: 'center', inline: 'center' });
+              const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+              el.dispatchEvent(evt);
+              el.click?.();
+              return true;
+            } catch {}
+          }
+        }
+      }
+      return false;
+    }, texts).catch(() => false);
+    if (ok) return true;
+  }
+  return false;
+}
+
+async function tryAdvanceFromMainCa(page: Page) {
+  // Detect main CA context heuristically (URL or common elements)
+  const url = page.url();
+  const onMainCa = /\/buyer\/findprofile/i.test(url) || !!(await page.$('input[type="email"], input[name*="email" i]').catch(()=>null));
+  if (!onMainCa) return false;
+  console.log('RCM Handler: On Main CA; attempting to advance...');
+  await blurAndTriggerValidation(page);
+  const hasErrors = await hasValidationErrors(page);
+  if (hasErrors) {
+    console.log('RCM Handler: Main CA validation errors present; not submitting.');
+    return false;
+  }
+  let advanced = await jsClickByText(page, [
+    'Get Access', 'Request Access', 'Continue', 'Proceed', 'Submit', 'Next', 'I Agree', 'Accept'
+  ]);
+  if (!advanced) {
+    await scrollAllFrames(page);
+    await page.waitForTimeout(200);
+    advanced = await jsClickByText(page, [
+      'Get Access', 'Request Access', 'Continue', 'Proceed', 'Submit', 'Next', 'I Agree', 'Accept'
+    ]);
+  }
+  if (!advanced) {
+    advanced = await jsClickSelector(page, [
+      'button:has-text("Get Access")', 'a:has-text("Get Access")', '[role="button"]:has-text("Get Access")',
+      'button:has-text("Request Access")', 'a:has-text("Request Access")',
+      'button:has-text("Continue")', 'button:has-text("Proceed")',
+      'button:has-text("Submit")', 'input[type="submit"]',
+      'button:has-text("I Agree")', 'button:has-text("Accept")'
+    ]);
+  }
+  if (advanced) {
+    console.log('RCM Handler: Advanced from Main CA.');
+    await page.waitForLoadState('networkidle').catch(()=>{});
+    return true;
+  }
+  console.log('RCM Handler: Could not find advance button on Main CA.');
+  return false;
+}
+
+async function scrollAllFrames(page: Page, steps = 3) {
+  for (let i = 0; i < steps; i++) {
+    for (const frame of page.frames()) {
+      await frame.evaluate(() => {
+        try {
+          window.scrollBy(0, Math.max(200, Math.floor(window.innerHeight * 0.9)));
+        } catch {}
+      }).catch(()=>{});
+    }
+    await page.waitForTimeout(150);
+  }
+}

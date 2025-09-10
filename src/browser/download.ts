@@ -131,7 +131,7 @@ async function clickElement(page: Page, selector: string) {
     if (element) {
       console.log('Download: Attempting JavaScript click on:', selector);
       try {
-        await page.evaluate((el) => el.click(), element);
+        await page.evaluate((el) => (el as HTMLElement).click(), element);
         console.log('Download: JavaScript click successful');
       } catch (jsError) {
         console.log('Download: JavaScript click failed, trying direct click:', (jsError as Error).message);
@@ -167,7 +167,7 @@ async function handleDownloadConfirmation(page: Page) {
         const isVisible = await element.isVisible().catch(() => false);
         if (isVisible) {
           console.log('Download: Found confirmation dialog, clicking:', selector);
-          await page.evaluate((el) => el.click(), element);
+          await page.evaluate((el) => (el as HTMLElement).click(), element);
           await page.waitForTimeout(1000);
           return;
         }

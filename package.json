@@ -7,7 +7,9 @@
     "start": "node dist/src/webhook/server.js",
     "dev": "tsx src/index.ts",
     "webhook": "tsx src/webhook/server.ts",
-    "worker": "tsx src/worker/queueWorker.ts"
+    "worker": "tsx src/worker/queueWorker.ts",
+    "manual": "tsx src/manual/manualForm.ts",
+    "mcp:playwright": "npx @playwright/mcp@latest"
   },
   "dependencies": {
     "@azure/storage-queue": "^12.15.0",

@@ -9,6 +9,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm start`: Run the compiled webhook server from dist/src/webhook/server.js
 - `npm run webhook`: Run the webhook server in development mode
 - `npx playwright install`: Install Playwright browser binaries (required for first setup)
+- `npm run mcp:playwright`: Start the Playwright MCP server over stdio
+
+### MCP: Playwright
+- Server: `@playwright/mcp@latest` via `npx` (stdio transport)
+- Workspace config: `.claude/settings.local.json` -> `mcpServers.playwright`
+- First-time setup: run `npx playwright install` to install browsers
 
 ## Architecture Overview
 

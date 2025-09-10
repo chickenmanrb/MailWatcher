@@ -1,15 +1,16 @@
-import { Browser, BrowserContext } from 'playwright';
+import { Browser, BrowserContext, type BrowserContextOptions } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export async function createBrowserContext(browser: Browser, domainKey: string): Promise<BrowserContext> {
+export async function createBrowserContext(browser: Browser, domainKey: string, options: Partial<BrowserContextOptions> = {}): Promise<BrowserContext> {
   const stateDir = process.env.STATE_DIR ?? '.auth';
   await fs.mkdir(stateDir, { recursive: true });
   const stateFile = path.join(stateDir, `${domainKey}.json`);
 
   const ctx = await browser.newContext({
     storageState: (await fileExists(stateFile)) ? stateFile : undefined,
-    acceptDownloads: true
+    acceptDownloads: true,
+    ...options
   });
 
   // Save state on close to persist SSO/cookies/MFA (if allowed)

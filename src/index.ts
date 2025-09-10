@@ -11,6 +11,8 @@ import { uploadFolderToSharePoint } from './upload/sharepoint.js';
 import { writeAudit } from './audit/auditLog.js';
 import { zipArtifacts } from './audit/zipArtifacts.js';
 import type { DealIngestionJob } from './types.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 async function run(job: DealIngestionJob) {
   console.log('Starting job:', job.task_name);
@@ -43,9 +45,18 @@ async function run(job: DealIngestionJob) {
         downloadedRoot = await handleGeneric(page, { job, workingDir, urls: detection.urls });
     }
 
-    await uploadFolderToSharePoint(downloadedRoot, job.sharepoint_folder_webUrl, job.sharepoint_folder_id);
+    await uploadFolderToSharePoint(downloadedRoot, job.sharepoint_folder_webUrl, (job as any).sharepoint_folder_id);
 
-    const receipt = await writeAudit(workingDir, { job, detection, downloadedRoot });
+    let entryKind: string | undefined;
+    try {
+      const p = path.join(workingDir, 'rcm-entry.txt');
+      entryKind = (await fs.readFile(p, 'utf8')).trim();
+    } catch {}
+
+    if (entryKind) {
+      console.log(`RCM Entry Kind: ${entryKind}`);
+    }
+    const receipt = await writeAudit(workingDir, { job, detection, downloadedRoot, rcm_entry_kind: entryKind });
     await zipArtifacts(workingDir);
     console.log(JSON.stringify({ ok: true, receipt }, null, 2));
     

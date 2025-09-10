@@ -13,19 +13,22 @@ module.exports = async function (context, req) {
       const provided = (req.headers && (req.headers['x-zapier-secret'] || req.headers['X-Zapier-Secret'])) || '';
       if (String(provided) !== String(expected)) {
         context.log.warn('unauthorized webhook request');
-        context.res = { status: 401, jsonBody: { ok: false, error: 'unauthorized' } };
+        context.res = { status: 401, headers: { 'content-type': 'application/json' }, body: { ok: false, error: 'unauthorized' } };
         return;
       }
     }
 
     let data = req.body || {};
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch {}
+    }
     if (Array.isArray(data)) data = data[0] || {};
     // Minimal validation: require SharePoint folder reference (webUrl or id)
     const sp = data.sharepoint || {};
     const spWebUrl = sp.drive_id || data['sharepoint.drive_id'] || data.sharepoint_folder_webUrl || data.sharepointFolderWebUrl || data.sharepointFolderUrl;
     const spId = sp.id || data.sharepoint_id;
     if (!spWebUrl && !spId) {
-      context.res = { status: 422, jsonBody: { ok: false, error: 'sharepoint folder reference required' } };
+      context.res = { status: 422, headers: { 'content-type': 'application/json' }, body: { ok: false, error: 'sharepoint folder reference required', keys: Object.keys(data || {}), nestedSharepointKeys: Object.keys(sp || {}) } };
       return;
     }
 
@@ -42,9 +45,9 @@ module.exports = async function (context, req) {
       email_body: data.email_body || data.emailBody || data.body_html || data.body
     };
     context.bindings.job = JSON.stringify(job);
-    context.res = { status: 202, jsonBody: { ok: true, enqueued: true } };
+    context.res = { status: 202, headers: { 'content-type': 'application/json' }, body: { ok: true, enqueued: true } };
   } catch (err) {
     context.log.error('webhook error', err && err.stack || String(err));
-    context.res = { status: 500, jsonBody: { ok: false, error: 'server error' } };
+    context.res = { status: 500, headers: { 'content-type': 'application/json' }, body: { ok: false, error: 'server error' } };
   }
 };
