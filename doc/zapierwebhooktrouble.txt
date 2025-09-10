@@ -1,0 +1,236 @@
+Webhook 404 Troubleshooting (Zapier → Our API)
+TL;DR Decision Tree
+
+Does the request hit our server?
+
+No logs at all → wrong URL/route/app/slot.
+
+Logs exist → routing ok; check auth, method, payload, or middleware.
+
+Are we using the right path & method?
+
+Azure Functions: route is /api/<functionName> unless overridden in function.json.
+
+App Service/Express: route must match exactly (POST /api/webhook).
+
+Zapier settings commonly causing 404s
+
+Wrap Request In Array = true → backend expecting object will choke (often shows as 404/not-matched route in some frameworks). Set to false unless we expect an array.
+
+Unflatten = yes → Zapier turns a.b=c into { a: { b: "c" } }. Make sure our schema matches.
+
+Missing Content-Type: application/json.
+
+Path typo or trailing slash differences.
+
+1) Verify Endpoint Exists
+Azure Functions (JavaScript/TypeScript)
+
+Check function.json:
+
+{
+  "bindings": [
+    {
+      "authLevel": "function",
+      "type": "httpTrigger",
+      "direction": "in",
+      "name": "req",
+      "methods": ["post"],
+      "route": "webhook"
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "res"
+    }
+  ]
+}
+
+
+Effective URL: https://<app>.azurewebsites.net/api/webhook
+
+If route is omitted, default is the function folder name.
+
+Ensure methods includes "post".
+
+If authLevel ≠ anonymous:
+You must pass the function key:
+
+https://<app>.azurewebsites.net/api/webhook?code=<FUNCTION_KEY>
+
+
+(If Zapier isn’t sending code, Azure returns 401/404 depending on config.)
+
+App Service / Express
+
+Confirm router:
+
+app.post('/api/webhook', json(), handler)
+
+
+No leading/trailing slash mismatch; case-sensitive on Linux.
+
+2) Reproduce Locally
+Curl template (mirror Zapier):
+curl -i -X POST "https://<app>.azurewebsites.net/api/webhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notion_page_id":"<id>",
+    "task_name":"<string>",
+    "sharepoint_drive_id":"<string-or-url>",
+    "dealroom_link":"<url>",
+    "sharepoint_id":"<guid>"
+  }'
+
+
+If function key needed:
+
+curl -i -X POST "https://<app>.azurewebsites.net/api/webhook?code=<FUNCTION_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{ ... }'
+
+
+Got 404 locally too? Route mismatch.
+Got 200 locally but 404 from Zapier? Check Zapier payload shape & headers.
+
+3) Inspect Zapier Step
+
+In the Zap “POST” step:
+
+URL: exact path (/api/webhook). No trailing space. Right slot/environment?
+
+Payload Type: json.
+
+Data: only send keys we use. Remove null fields (e.g., nda_link:null) unless backend expects them.
+
+Wrap Request In Array: set false unless we explicitly accept [{...}].
+
+Unflatten: set no unless we require nested objects. (Safer default = no.)
+
+If you keep Unflatten = yes, then map keys as parent.child only when your schema expects { parent: { child } }.
+
+4) Turn On Logs
+Azure Functions (recommended)
+# stream logs
+az functionapp log stream \
+  --name <APP_NAME> \
+  --resource-group <RG_NAME>
+
+
+Or App Service:
+
+az webapp log tail \
+  --name <APP_NAME> \
+  --resource-group <RG_NAME>
+
+
+What to look for
+
+Any line showing Executing 'Functions.webhook' (Functions) or request-line POST /api/webhook (Express).
+
+If nothing appears during Zap test → wrong URL/app/slot or blocked by auth.
+
+5) Minimal Server Handlers (for sanity checks)
+Azure Functions (JS)
+// index.js
+module.exports = async function (context, req) {
+  context.log('Webhook hit', { method: req.method, body: req.body });
+  if (req.method !== 'POST') {
+    context.res = { status: 405, body: 'Method Not Allowed' };
+    return;
+  }
+  // Basic echo
+  context.res = { status: 200, body: { ok: true, received: req.body } };
+};
+
+Express (TS/JS)
+import express from 'express';
+const app = express();
+app.use(express.json());
+
+app.post('/api/webhook', (req, res) => {
+  console.log('Webhook hit', req.body);
+  return res.status(200).json({ ok: true });
+});
+
+app.listen(process.env.PORT || 3000, () => console.log('listening'));
+
+
+If these succeed with curl but fail from Zapier, the issue is Zapier config (array/unflatten/auth/headers), not the server.
+
+6) Validate Payload Early
+
+Add schema validation to fail fast with 400 instead of ambiguous 404.
+
+import { z } from 'zod';
+
+const WebhookSchema = z.object({
+  notion_page_id: z.string().min(1),
+  task_name: z.string().min(1),
+  sharepoint_drive_id: z.string().min(1),
+  dealroom_link: z.string().url().optional(),
+  sharepoint_id: z.string().min(1)
+});
+
+const parse = (body:any) => WebhookSchema.safeParse(body);
+
+
+On failure, log the body & return:
+
+return res.status(400).json({ error: 'Bad payload', issues: result.error.issues });
+
+7) Common Gotchas → Fixes
+
+404 with no logs → wrong slot (staging vs production) or wrong resource group / app name.
+
+404 only from Zapier → Wrap Request in Array = true (backend expects object). Turn it off.
+
+401/404 intermittently → missing ?code= for authLevel:function. Make it anonymous if public.
+
+415/unsupported media type → ensure Zapier sends Content-Type: application/json.
+
+Route conflicts → Middleware or proxies rewriting paths. Log req.originalUrl.
+
+8) Quick Health & Echo Endpoints (add now)
+
+GET /api/health → 200 {status:"ok", version, commit}
+
+POST /api/echo → 200 echo body (to verify JSON parse & shape)
+
+These let you separate network/routing problems from business logic.
+
+9) Example Zapier-Compatible Test Payload
+{
+  "notion_page_id": "26933106-7442-4c1d-9c16-4da41d",
+  "task_name": "Richmond, TX – Lakemont",
+  "sharepoint_drive_id": "https://odyssey.../Lakemont",
+  "dealroom_link": "https://www2.box.com/s/...",
+  "sharepoint_id": "e2e76d2d-fdfd-4a...fcbbf"
+}
+
+
+Do not include null keys unless your schema expects them.
+
+10) Zapier “Search then Create” Branching (FYI)
+
+If you need to split logic on “found vs created” from a Notion Find Database Item step, filter on the boolean zap_search_was_found:
+
+true → existing item
+
+false → newly created item
+
+Use a Filter or Paths immediately after the search step.
+
+Checklist for PRs that touch the webhook
+
+ Route matches docs (POST /api/webhook).
+
+ Azure Functions function.json has methods:["post"], route:"webhook", authLevel correct.
+
+ Zapier: Wrap Request In Array = false, Unflatten = no (unless documented).
+
+ Validates payload with Zod/JOI; returns 400 on bad input.
+
+ Health & echo endpoints present.
+
+ Log streaming verified in README instructions.

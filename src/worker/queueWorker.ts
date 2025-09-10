@@ -30,7 +30,12 @@ async function work() {
         continue;
       }
 
-      const text = Buffer.from(msg.messageText, 'base64').toString('utf8');
+      let text = msg.messageText || '';
+      if (text && text.trim().startsWith('{')) {
+        // Already decoded JSON
+      } else {
+        try { text = Buffer.from(text, 'base64').toString('utf8'); } catch {}
+      }
       const job: DealIngestionJob = JSON.parse(text);
       console.log(`[worker] start ${job.task_name}`);
       try {
@@ -52,4 +57,3 @@ async function work() {
 function sleep(ms: number) { return new Promise(res => setTimeout(res, ms)); }
 
 work().catch(err => { console.error(err); process.exit(1); });
-
