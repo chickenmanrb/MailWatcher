@@ -8,6 +8,7 @@ import { handleCrexi } from './handlers/crexi.js';
 import { handleRcm } from './handlers/rcm.js';
 import { handleGeneric } from './handlers/generic.js';
 import { handleUniversal } from './handlers/universal.js';
+import { handleJll } from './handlers/jll.js';
 import { uploadFolderToSharePointByPath } from './upload/sharepoint.js';
 import { writeAudit } from './audit/auditLog.js';
 import { zipArtifacts } from './audit/zipArtifacts.js';
@@ -41,6 +42,9 @@ async function run(job: DealIngestionJob) {
         break;
       case 'rcm':
         downloadedRoot = await handleRcm(page, { job, workingDir, urls: detection.urls });
+        break;
+      case 'jll':
+        downloadedRoot = await handleJll(page, { job, workingDir, urls: detection.urls, downloadsPath: (ctx as any)._options?.downloadsPath });
         break;
       default:
         if (process.env.USE_UNIVERSAL_DEFAULT === 'true') {

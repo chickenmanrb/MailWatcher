@@ -8,6 +8,7 @@ import { handleCrexi } from '../handlers/crexi.js';
 import { handleBuildout } from '../handlers/buildout.js';
 import { handleGeneric } from '../handlers/generic.js';
 import { handleUniversal, handleUniversalDealroom } from '../handlers/universal.js';
+import { handleJll } from '../handlers/jll.js';
 import type { DealIngestionJob } from '../types.js';
 
 type Args = {
@@ -19,7 +20,7 @@ type Args = {
   company?: string;
   title?: string;
   phone?: string;
-  handler?: 'rcm' | 'crexi' | 'buildout' | 'generic' | 'universal' | 'universal-dealroom';
+  handler?: 'rcm' | 'crexi' | 'buildout' | 'generic' | 'universal' | 'universal-dealroom' | 'jll';
   taskName?: string;
 };
 
@@ -33,6 +34,7 @@ function parseArgs(): Args {
     || (process.argv.includes('--generic') && 'generic')
     || (process.argv.includes('--universal') && 'universal')
     || (process.argv.includes('--universal-dealroom') && 'universal-dealroom')
+    || (process.argv.includes('--jll') && 'jll')
     || (get('platform') as any);
   return {
     url,
@@ -263,6 +265,9 @@ async function runManualHandler(args: Args) {
         break;
       case 'universal-dealroom':
         downloadedRoot = await handleUniversalDealroom(page, { job, workingDir, urls: [args.url] });
+        break;
+      case 'jll':
+        downloadedRoot = await handleJll(page, { job, workingDir, urls: [args.url], downloadsPath: (ctx as any)._options?.downloadsPath });
         break;
       default:
         downloadedRoot = await handleGeneric(page, { job, workingDir, urls: [args.url] });

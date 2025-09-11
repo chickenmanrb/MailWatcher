@@ -2,6 +2,7 @@ export type Detection =
   | { kind: 'buildout'; domainKey: 'buildout'; urls: string[] }
   | { kind: 'crexi'; domainKey: 'crexi'; urls: string[] }
   | { kind: 'rcm'; domainKey: 'rcm'; urls: string[] }
+  | { kind: 'jll'; domainKey: 'jll'; urls: string[] }
   | { kind: 'generic'; domainKey: 'generic'; urls: string[] };
 
 export function detectPlatform(urls: string[]): Detection {
@@ -17,6 +18,10 @@ export function detectPlatform(urls: string[]): Detection {
   // RCM / Juniper / other common RCM domains
   if (has('rcm1.com') || has('junipercapitalmarket') || has('dealroom') || has('intralinks')) {
     return { kind: 'rcm', domainKey: 'rcm', urls };
+  }
+  // JLL invest portal / login
+  if (has('invest.jll.com') || has('login.jll.com')) {
+    return { kind: 'jll', domainKey: 'jll', urls };
   }
   return { kind: 'generic', domainKey: 'generic', urls };
 }

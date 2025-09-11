@@ -8,6 +8,7 @@ A Playwright-based automation that ingests deal room documents and uploads them 
 - Run universal/manual Deal-to-Drive: `npm run manual:d2d -- --url="<dealroom_url>" --sprel="/sites/<SiteName>/Shared Documents/<FolderPath>"`
 
 Examples:
+
 - PowerShell:
   - `npm run manual:d2d -- --url="https://my.rcm1.com/buyer/vdr?pv=..." --sprel="/sites/ORHAcquisitions/Shared Documents/DOTM/2025/Project X"`
   - or escape `&`: `--url=https://my.rcm1.com/buyer/vdr?pv=...`&...`
@@ -22,6 +23,7 @@ You can pass args as `--key=value` or `--key value`.
 - `--sprel` Server-relative SharePoint folder path
 
 Environment variable alternatives:
+
 - `DEALROOM_URL`, `SHAREPOINT_SERVER_RELATIVE_PATH`, `SP_HOSTNAME`
 
 ## Notes on Downloads
@@ -29,7 +31,7 @@ Environment variable alternatives:
 - Files are consolidated under `runs/d2d-<host>-<timestamp>/downloads`.
 - The browser may write to the OS Downloads folder during capture; the tool moves stabilized files to the job `downloads` folder.
 - To override the watched OS downloads directory, set `RCM_DOWNLOAD_DIR` (defaults to `~/Downloads`).
- - For SharePoint uploads via server-relative path, set `SP_HOSTNAME` (e.g., `contoso.sharepoint.com`).
+- For SharePoint uploads via server-relative path, set `SP_HOSTNAME` (e.g., `contoso.sharepoint.com`).
 
 ## Other Scripts
 
@@ -37,3 +39,25 @@ Environment variable alternatives:
 - Webhook server: `npm run webhook`
 - Worker: `npm run worker`
 - E2E dealroom test: `npm run e2e:dealroom`
+
+## Manual Testing
+
+npx playwright codegen `<URL>`
+
+## Manual Flows
+
+Manual Flow Syntax
+
+- Basic manual runner:
+  - npm run manual -- --url="`<URL>`" [--rcm|--crexi|--buildout|--generic|--universal|--universal-dealroom] [--first=.. --last=.. --name=.. --email=.. --company=.. --title=.. --phone=..] [--task=..]
+  - Alternative handler flag: --platform=rcm|crexi|buildout|generic|universal|universal-dealroom
+- Convenience scripts:
+  - Universal: npm run manual:universal -- --url="`<URL>`"
+  - Dealroom (universal-dealroom): npm run manual:dealroom -- --url="`<URL>`"
+- Dealroom-to-SharePoint (D2D):
+  - npm run manual:d2d -- --url="`<URL>`" --sprel="/sites/`<Site>`/Shared Documents/`<FolderPath>`"
+- Env var alternative:
+  - Bash: MANUAL_URL="`<URL>`" npm run manual -- --universal
+  - PowerShell: $env:MANUAL_URL="`<URL>`"; npm run manual -- --universal
+- Example:
+  - npm run manual -- --url="https://example.com/form" --universal --email="me@acme.com" --first=Alice --last=Lee --company="Acme" --title="Analyst" --phone="555-111-2222"
