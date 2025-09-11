@@ -35,7 +35,7 @@ const env = (...keys: string[]) => {
   return undefined;
 };
 
-type DataKeys = typeof AUTOCOMPLETE_MAP[keyof typeof AUTOCOMPLETE_MAP] | 'EMAIL' | 'PASSWORD' | 'USERNAME' | 'FULL_NAME' | 'FIRST_NAME' | 'LAST_NAME' | 'COMPANY' | 'TITLE' | 'PHONE' | 'WEBSITE' | 'ADDRESS1' | 'ADDRESS2' | 'CITY' | 'STATE' | 'POSTAL_CODE' | 'COUNTRY';
+type DataKeys = 'EMAIL' | 'PASSWORD' | 'USERNAME' | 'FULL_NAME' | 'FIRST_NAME' | 'LAST_NAME' | 'COMPANY' | 'TITLE' | 'PHONE' | 'WEBSITE' | 'ADDRESS1' | 'ADDRESS2' | 'CITY' | 'STATE' | 'POSTAL_CODE' | 'COUNTRY';
 
 async function buildDataBucket(): Promise<Record<DataKeys, string | undefined>> {
   const file = await loadFormData().catch(() => ({}));
@@ -63,7 +63,8 @@ async function buildDataBucket(): Promise<Record<DataKeys, string | undefined>> 
 
 const SENSITIVE = /(ssn|social[\s_-]*security|credit[\s_-]*card|card[\s_-]*number|cc[-_\s]*num|cvv|cvc|security[\s_-]*code|iban|swift|routing|account[\s_-]*number|bank|dob|birth|passport|driver|licen[cs]e)/i;
 
-const AUTOCOMPLETE_MAP: Record<string, keyof typeof DATA> = {
+type DataRecord = Record<DataKeys, string | undefined>;
+const AUTOCOMPLETE_MAP: Record<string, DataKeys> = {
   email: 'EMAIL',
   username: 'USERNAME',
   name: 'FULL_NAME',
@@ -84,7 +85,7 @@ const AUTOCOMPLETE_MAP: Record<string, keyof typeof DATA> = {
   'new-password': 'PASSWORD',
 };
 
-const SYNONYMS: Array<[keyof typeof DATA, RegExp[]]> = [
+const SYNONYMS: Array<[DataKeys, RegExp[]]> = [
   ['EMAIL', [/email|e-?mail/i]],
   ['PASSWORD', [/password|passcode|pwd/i]],
   ['USERNAME', [/user.?name(?!.*(email))/i]],
@@ -148,11 +149,11 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
 
     if (!options.submit) break;
 
-    const advanced = await tryAdvance(page);
-    if (!advanced && !filled) {
-      if (options.debug) console.log('Universal Handler: no advance and no fill; breaking');
-      break; // nothing changed, stop looping
-    }
+      const advanced = await tryAdvance(page);
+      if (!advanced && !filledCount) {
+        if (options.debug) console.log('Universal Handler: no advance and no fill; breaking');
+        break; // nothing changed, stop looping
+      }
     await page.waitForLoadState('networkidle').catch(() => {});
     await page.waitForTimeout(400);
 
@@ -185,7 +186,7 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
   await activePage.screenshot({ path: path.join(ctx.workingDir, 'universal-documents-selected.png') }).catch(() => {});
 
   // Try the context-specific Download button (e.g., "Download (123 KB)")
-  const selectedBundle = await clickDownloadSelected(activePage, outDir, ctx.downloadsPath).catch(() => null);
+  const selectedBundle = await clickDownloadSelected(activePage, outDir, undefined).catch(() => null);
   if (selectedBundle) return outDir;
 
   // Otherwise try a visible "Download All" UI
@@ -387,19 +388,20 @@ async function clickDownloadSelected(page: Page, outDir: string, downloadsPath?:
   // Initialize FileSystemMonitors BEFORE clicking to capture baseline
   // Monitor both the context downloads directory (if provided) and the OS default/RCM_DOWNLOAD_DIR
   const fsMonitors: FileSystemMonitor[] = [];
+  const matchers: (RegExp | ((name: string) => boolean))[] = [
+    /Unlimited Saving II/i,
+    /\.zip$/i,
+    /\.csv$/i,
+    /\.tmp$/i,
+    () => true
+  ];
   const commonMonitorOpts = {
     stagingDir: outDir,
-    matchers: [
-      /Unlimited Saving II/i,
-      /\.zip$/i,
-      /\.csv$/i,
-      /\.tmp$/i,
-      () => true
-    ],
+    matchers,
     appearTimeoutMs: 60_000,
     stableTimeoutMs: 120_000,
     forceZipExtension: true
-  } as const;
+  };
   if (downloadsPath) {
     fsMonitors.push(new FileSystemMonitor({ ...commonMonitorOpts, downloadsDir: downloadsPath }));
   }
@@ -421,10 +423,10 @@ async function clickDownloadSelected(page: Page, outDir: string, downloadsPath?:
     console.log('Universal Dealroom: Download started:', download.suggestedFilename());
     downloads.push(download);
   };
-  context.on('download', downloadHandler);
+  page.on('download', downloadHandler);
 
   // Prepare to capture download BEFORE clicking (context-level to catch popups)
-  let downloadPromise = page.context().waitForEvent('download', { timeout: 5_000 }).catch(() => null);
+  let downloadPromise = page.waitForEvent('download', { timeout: 5_000 }).catch(() => null);
 
   // Try role-based button name first: Download (<size>)
   let clicked = false;
@@ -536,7 +538,7 @@ async function clickDownloadSelected(page: Page, outDir: string, downloadsPath?:
   }
 
   // Race Playwright's download event with FileSystemMonitor captures
-  const pwDownloadPromise = page.context().waitForEvent('download', { timeout: 60_000 })
+  const pwDownloadPromise = page.waitForEvent('download', { timeout: 60_000 })
     .then(d => ({ type: 'pw' as const, download: d }))
     .catch(() => null);
 
@@ -550,7 +552,7 @@ async function clickDownloadSelected(page: Page, outDir: string, downloadsPath?:
   }
 
   // Clean up the event listener
-  context.off('download', downloadHandler);
+  page.off('download', downloadHandler);
 
   if (winner && winner.type === 'fs') {
     console.log('Universal Dealroom: Download captured via FileSystemMonitor:', winner.path, 'from', (winner as any).monitorDir);
@@ -589,7 +591,7 @@ async function clickDownloadSelected(page: Page, outDir: string, downloadsPath?:
     return null;
   }
 
-  const suggested = await download.suggestedFilename().catch(() => 'bundle.zip');
+  const suggested = download.suggestedFilename();
   const to = path.join(outDir, suggested || 'bundle.zip');
   try {
     await download.saveAs(to);

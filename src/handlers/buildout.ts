@@ -170,7 +170,7 @@ async function handleFormCheckboxes(page: Page) {
         const isChecked = await checkbox.isChecked();
         if (!isChecked) {
           console.log('Buildout Handler: Checking required checkbox');
-          await page.evaluate((el) => el.click(), checkbox);
+          await page.evaluate((el: any) => (el as HTMLElement).click(), checkbox);
           await page.waitForTimeout(500);
         }
       }
@@ -219,8 +219,8 @@ async function handleAllCheckboxes(page: Page) {
       if (!isChecked) {
         console.log(`Buildout Handler: Checking checkbox ${i + 1}: "${labelText}"`);
         
-        try {
-          await page.evaluate((el) => el.click(), checkbox);
+          try {
+            await page.evaluate((el: any) => (el as HTMLElement).click(), checkbox);
           console.log(`Buildout Handler: Successfully clicked checkbox ${i + 1}`);
         } catch (error) {
           console.log(`Buildout Handler: Checkbox click failed, trying label for checkbox ${i + 1}`);
@@ -230,7 +230,7 @@ async function handleAllCheckboxes(page: Page) {
             if (checkboxId) {
               const label = await page.$(`label[for="${checkboxId}"]`);
               if (label) {
-                await page.evaluate((el) => el.click(), label);
+          await page.evaluate((el: any) => (el as HTMLElement).click(), label);
                 console.log(`Buildout Handler: Successfully clicked label for checkbox ${i + 1}`);
               }
             }
@@ -258,7 +258,7 @@ async function clickIfExists(page: Page, selector: string) {
         console.log(`Buildout Handler: Found and clicking: ${selector}`);
         
         try {
-          await page.evaluate((el) => el.click(), element);
+          await page.evaluate((el: any) => (el as HTMLElement).click(), element);
           console.log(`Buildout Handler: Successfully clicked: ${selector}`);
         } catch (jsError) {
           console.log(`Buildout Handler: JS click failed, trying direct click: ${selector}`);

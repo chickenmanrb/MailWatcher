@@ -216,7 +216,7 @@ export class FormAutofiller {
     options: AutofillOptions
   ): Promise<number> {
     const filledCount = await frame.evaluate(
-      ({ data, autocompleteMap, options, sensitivePattern }) => {
+      ({ data, autocompleteMap, options, sensitivePattern }: any) => {
         let filled = 0;
         const inputs = Array.from(document.querySelectorAll('input, textarea, select')) as (HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)[];
 
@@ -225,13 +225,13 @@ export class FormAutofiller {
           if (shouldSkipElement(element, options, sensitivePattern)) continue;
 
           const fieldInfo = getFieldInfo(element);
-          const fieldType = detectFieldType(fieldInfo, autocompleteMap);
+            const fieldType = detectFieldType(fieldInfo, autocompleteMap);
           
-          if (fieldType && data[fieldType]) {
-            if (fillField(element, data[fieldType])) {
-              filled++;
+            if (fieldType && (data as any)[fieldType]) {
+              if (fillField(element as any, (data as any)[fieldType])) {
+                filled++;
+              }
             }
-          }
         }
 
         function isElementVisible(el: HTMLElement): boolean {

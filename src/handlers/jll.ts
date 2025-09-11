@@ -225,7 +225,7 @@ async function consentAndDownload(page: Page, ctx: HandlerCtx, outDir: string): 
   // Capture downloads from Playwright too
   const downloads: any[] = [];
   const onDownload = (d: any) => downloads.push(d);
-  context.on('download', onDownload);
+  page.on('download', onDownload);
 
   // Try to check consent first
   await ensureConsentChecked(page);
@@ -237,7 +237,7 @@ async function consentAndDownload(page: Page, ctx: HandlerCtx, outDir: string): 
       return { type: 'fs' as const, path: p };
     } catch { return null; }
   });
-  const pwPromise = context.waitForEvent('download', { timeout: 60_000 })
+  const pwPromise = page.waitForEvent('download', { timeout: 60_000 })
     .then(d => ({ type: 'pw' as const, download: d }))
     .catch(() => null);
 
@@ -255,7 +255,7 @@ async function consentAndDownload(page: Page, ctx: HandlerCtx, outDir: string): 
     const all = await Promise.all([pwPromise, ...fsPromises]);
     winner = all.find(Boolean) as any;
   }
-  context.off('download', onDownload);
+  page.off('download', onDownload);
 
   if (!winner) return null;
 
@@ -263,7 +263,7 @@ async function consentAndDownload(page: Page, ctx: HandlerCtx, outDir: string): 
 
   const download = winner.download || downloads[0];
   if (!download) return null;
-  const suggested = await download.suggestedFilename().catch(() => 'bundle.zip');
+  const suggested = download.suggestedFilename();
   const to = path.join(outDir, suggested || 'bundle.zip');
   try {
     await download.saveAs(to);
@@ -320,9 +320,9 @@ async function setCheckboxes(page: Page, selectors: string[]) {
 
 async function captureAnyDownload(page: Page, ctx: HandlerCtx, outDir: string) {
   const context = page.context();
-  const d = await context.waitForEvent('download', { timeout: 30000 }).catch(() => null);
+  const d = await page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
   if (!d) return null;
-  const name = await d.suggestedFilename().catch(() => 'bundle.zip');
+  const name = d.suggestedFilename();
   const dest = path.join(outDir, name || 'bundle.zip');
   try { await d.saveAs(dest); return dest; } catch { return null; }
 }

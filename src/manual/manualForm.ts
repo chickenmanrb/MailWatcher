@@ -509,11 +509,11 @@ async function hasValidationErrors(page: import('playwright').Page, log?: (s:str
         for (const el of inputs) {
           const ai = el.getAttribute('aria-invalid');
           const bad = ai === 'true' || (typeof (el as any).checkValidity === 'function' && !(el as any).checkValidity());
-          if (bad) {
-            const label = el.getAttribute('name') || el.getAttribute('id') || el.getAttribute('aria-label') || el.placeholder || el.tagName;
-            const msg = (el as any).validationMessage || '';
-            invalids.push(`${label}${msg ? `: ${msg}` : ''}`);
-          }
+            if (bad) {
+              const label = el.getAttribute('name') || el.getAttribute('id') || el.getAttribute('aria-label') || (el as any).placeholder || el.tagName;
+              const msg = (el as any).validationMessage || '';
+              invalids.push(`${label}${msg ? `: ${msg}` : ''}`);
+            }
         }
         msgs.push(...invalids);
         return msgs.slice(0, 10);

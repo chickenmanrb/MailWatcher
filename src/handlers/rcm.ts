@@ -427,14 +427,16 @@ async function handleAllCheckboxes(page: Page) {
                 await label.click({ timeout: 2000 });
                 console.log(`RCM Handler: Successfully clicked label for checkbox ${i + 1}`);
               }
-            } else {
-              // Try clicking the parent label element
-              const parentLabel = await page.evaluateHandle((cb) => cb.closest('label'), checkbox);
-              if (parentLabel) {
-                await parentLabel.click();
-                console.log(`RCM Handler: Successfully clicked parent label for checkbox ${i + 1}`);
+              } else {
+                // Try clicking the parent label element via JS
+                try {
+                  await page.evaluate((cb: any) => {
+                    const lb = (cb as HTMLElement).closest('label') as HTMLElement | null;
+                    lb?.click?.();
+                  }, checkbox);
+                  console.log(`RCM Handler: Successfully clicked parent label for checkbox ${i + 1}`);
+                } catch {}
               }
-            }
           } catch (labelError) {
             console.log(`RCM Handler: Could not click checkbox ${i + 1}:`, labelError.message);
           }
@@ -718,7 +720,7 @@ async function jsClickByText(page: Page, texts: string[], expectNavigation = fal
   console.log(`RCM Handler: Looking for buttons with text: ${texts.join(', ')}`);
   
   // First, find and log all potential buttons
-  const buttons = await page.evaluate((needles: string[]) => {
+  const buttons = await page.evaluate((needles: any) => {
     const candidates = Array.from(document.querySelectorAll('button, a, label, input[type="button"], input[type="submit"]')) as HTMLElement[];
     const found: { text: string; tagName: string; disabled: boolean; visible: boolean }[] = [];
     
@@ -740,7 +742,7 @@ async function jsClickByText(page: Page, texts: string[], expectNavigation = fal
   console.log(`RCM Handler: Found ${buttons.length} buttons on page:`, buttons.map(b => `${b.tagName}:"${b.text}"(${b.disabled ? 'disabled' : 'enabled'}, ${b.visible ? 'visible' : 'hidden'})`));
   
   for (const frame of page.frames()) {
-    const clickResult = await frame.evaluate((needles: string[]) => {
+    const clickResult = await frame.evaluate((needles: any) => {
       const candidates = Array.from(document.querySelectorAll('button, a, label, input[type="button"], input[type="submit"]')) as HTMLElement[];
       for (const n of needles) {
         const re = new RegExp(n, 'i');
@@ -774,8 +776,9 @@ async function jsClickByText(page: Page, texts: string[], expectNavigation = fal
       return { clicked: false };
     }, texts).catch(() => ({ clicked: false }));
     
-    if (clickResult.clicked) {
-      console.log(`RCM Handler: Successfully clicked button: "${clickResult.text}" (${clickResult.tagName})`);
+    if ((clickResult as any).clicked) {
+      const cr: any = clickResult as any;
+      console.log(`RCM Handler: Successfully clicked button: "${cr.text}" (${cr.tagName})`);
       
       if (expectNavigation) {
         console.log('RCM Handler: Waiting for navigation...');

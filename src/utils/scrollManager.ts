@@ -51,20 +51,20 @@ export class ScrollManager {
       if (!isVisible) {
         logger.debug('ScrollManager', 'Element is not visible, attempting to scroll parent');
         
-        await page.evaluate((el) => {
-          let parent = el.parentElement;
+        await page.evaluate((el: any) => {
+          let parent = (el as HTMLElement).parentElement as HTMLElement | null;
           while (parent) {
             if (parent.scrollHeight > parent.clientHeight) {
-              parent.scrollTop = el.offsetTop - parent.offsetTop;
+              parent.scrollTop = (el as HTMLElement).offsetTop - parent.offsetTop;
               break;
             }
-            parent = parent.parentElement;
+            parent = parent.parentElement as HTMLElement | null;
           }
         }, element);
       }
 
-      const viewportData = await page.evaluate((el, opts) => {
-        const rect = el.getBoundingClientRect();
+      const viewportData = await page.evaluate(({ el, opts }: any) => {
+        const rect = (el as HTMLElement).getBoundingClientRect();
         const viewport = {
           width: window.innerWidth,
           height: window.innerHeight,
@@ -109,7 +109,7 @@ export class ScrollManager {
           headerHeight,
           footerHeight,
         };
-      }, element, opts);
+      }, { el: element, opts });
 
       if (viewportData.isInView) {
         logger.debug('ScrollManager', 'Element already in view');
@@ -122,15 +122,16 @@ export class ScrollManager {
         await page.waitForTimeout(500);
       }
 
-      await page.evaluate((el, opts) => {
-        const targetY = el.getBoundingClientRect().top + window.scrollY;
-        const offsetY = window.innerHeight / 2 - el.getBoundingClientRect().height / 2;
+      await page.evaluate(({ el, opts }: any) => {
+        const rect = (el as HTMLElement).getBoundingClientRect();
+        const targetY = rect.top + window.scrollY;
+        const offsetY = window.innerHeight / 2 - rect.height / 2;
         
         window.scrollTo({
           top: targetY - offsetY,
           behavior: opts.behavior || 'auto',
         });
-      }, element, opts);
+      }, { el: element, opts });
 
       if (opts.behavior === 'smooth') {
         await page.waitForTimeout(300);
@@ -155,25 +156,25 @@ export class ScrollManager {
 
       await this.scrollElementIntoView(page, element, options);
 
-      const isClickable = await page.evaluate((el) => {
-        const rect = el.getBoundingClientRect();
+      const isClickable = await page.evaluate((el: any) => {
+        const rect = (el as HTMLElement).getBoundingClientRect();
         const x = rect.left + rect.width / 2;
         const y = rect.top + rect.height / 2;
         const topElement = document.elementFromPoint(x, y);
         
-        return el === topElement || el.contains(topElement);
+        return el === topElement || (el as HTMLElement).contains(topElement);
       }, element);
 
       if (!isClickable) {
         logger.warn('ScrollManager', 'Element is not clickable, might be covered by another element');
         
-        await page.evaluate((el) => {
+        await page.evaluate((el: any) => {
           const allElements = document.querySelectorAll('*');
           allElements.forEach(elem => {
             const style = window.getComputedStyle(elem);
             if (style.position === 'fixed' || style.position === 'sticky') {
               const rect = elem.getBoundingClientRect();
-              const elRect = el.getBoundingClientRect();
+              const elRect = (el as HTMLElement).getBoundingClientRect();
               
               if (rect.bottom > elRect.top && rect.top < elRect.bottom) {
                 (elem as HTMLElement).style.pointerEvents = 'none';

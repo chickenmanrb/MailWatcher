@@ -61,3 +61,25 @@ Manual Flow Syntax
   - PowerShell: $env:MANUAL_URL="`<URL>`"; npm run manual -- --universal
 - Example:
   - npm run manual -- --url="https://example.com/form" --universal --email="me@acme.com" --first=Alice --last=Lee --company="Acme" --title="Analyst" --phone="555-111-2222"
+
+## JLL Flow
+
+- Overview
+  - Supports JLL deals that require login and an e‑sign CA step before entering the Deal Room and downloading documents.
+  - The handler is variant‑aware (detects login page, CA/e‑sign UI, deal room) and uses robust fallbacks.
+
+- Environment
+  - Credentials: set `JLL_USERNAME` or `JLL_EMAIL`, and `JLL_PASSWORD`.
+  - E‑sign fields (optional): `JLL_ESIGN_NAME`, `JLL_TITLE`, `JLL_COMPANY`.
+  - Optional flags: `JLL_SKIP_LOGIN=true`, `JLL_SKIP_ESIGN=true`.
+
+- Manual run
+  - `npm run manual:jll -- --url="https://invest.jll.com/us/en/listings/.../esign-ca"`
+  - Also accepts listing URLs; the handler completes login/e‑sign, navigates to `/deal-room`, checks consent, and downloads.
+
+- Behavior
+  - Artifacts: screenshots in `runs/<task>/jll-*.png`, downloads in `runs/<task>/downloads`.
+  - Download capture monitors both the Playwright context downloads directory and the OS Downloads folder (`RCM_DOWNLOAD_DIR` overrides OS default).
+
+- Auto-detection
+  - When running via the main job flow, links containing `invest.jll.com` or `login.jll.com` are routed to the JLL handler automatically.

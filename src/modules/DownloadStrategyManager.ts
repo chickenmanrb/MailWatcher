@@ -128,7 +128,7 @@ export class DownloadStrategyManager {
   private async platformSpecificDownload(
     page: Page,
     outputDir: string,
-    config: DownloadConfig
+    config: DownloadConfig = {}
   ): Promise<string | null> {
     if (!config.platformConfig?.download) return null;
 
@@ -161,11 +161,11 @@ export class DownloadStrategyManager {
   private async downloadSelectedWithSize(
     page: Page,
     outputDir: string,
-    config: DownloadConfig
+    config: DownloadConfig = {}
   ): Promise<string | null> {
     await page.waitForTimeout(800);
 
-    const downloadPromise = page.context().waitForEvent('download', { timeout: config.timeout || 60000 }).catch(() => null);
+    const downloadPromise = page.waitForEvent('download', { timeout: config.timeout || 60000 }).catch(() => null);
     
     const selectors = [
       page.getByRole('button', { name: /download\s*\((?!0\s*kb)[^)]+\)/i }),
@@ -201,7 +201,7 @@ export class DownloadStrategyManager {
   private async downloadAllButton(
     page: Page,
     outputDir: string,
-    config: DownloadConfig
+    config: DownloadConfig = {}
   ): Promise<string | null> {
     const selectors = [
       'button:has-text("Download All")',
@@ -224,7 +224,7 @@ export class DownloadStrategyManager {
   private async gridSelectAndDownload(
     page: Page,
     outputDir: string,
-    config: DownloadConfig
+    config: DownloadConfig = {}
   ): Promise<string | null> {
     const selectSelectors = [
       page.getByRole('checkbox', { name: 'Select All Rows' }),
@@ -250,7 +250,7 @@ export class DownloadStrategyManager {
   private async enumerateAndDownload(
     page: Page,
     outputDir: string,
-    config: DownloadConfig
+    config: DownloadConfig = {}
   ): Promise<string | null> {
     const selectors = [
       'a[href*="download"]',
@@ -277,7 +277,7 @@ export class DownloadStrategyManager {
   private async contextMenuDownload(
     page: Page,
     outputDir: string,
-    config: DownloadConfig
+    config: DownloadConfig = {}
   ): Promise<string | null> {
     const fileElements = await page.$$('[role="row"], tr[data-file], .file-item, .document-item');
     
@@ -290,7 +290,7 @@ export class DownloadStrategyManager {
         if (contextMenu) {
           const downloadOption = await contextMenu.$('text=/download/i');
           if (downloadOption) {
-            const downloadPromise = page.context().waitForEvent('download', { timeout: 10000 }).catch(() => null);
+            const downloadPromise = page.waitForEvent('download', { timeout: 10000 }).catch(() => null);
             await downloadOption.click();
             
             const download = await downloadPromise;
@@ -311,7 +311,7 @@ export class DownloadStrategyManager {
   private async iframeDownloadSearch(
     page: Page,
     outputDir: string,
-    config: DownloadConfig
+    config: DownloadConfig = {}
   ): Promise<string | null> {
     const frames = page.frames();
     
@@ -322,7 +322,7 @@ export class DownloadStrategyManager {
         const downloadButtons = await frame.$$('button:has-text("Download"), a:has-text("Download")');
         
         for (const button of downloadButtons) {
-          const downloadPromise = page.context().waitForEvent('download', { timeout: 10000 }).catch(() => null);
+          const downloadPromise = page.waitForEvent('download', { timeout: 10000 }).catch(() => null);
           await button.click();
           
           const download = await downloadPromise;
@@ -337,7 +337,7 @@ export class DownloadStrategyManager {
     return null;
   }
 
-  private async selectAllDocuments(page: Page, config: DownloadConfig): Promise<void> {
+  private async selectAllDocuments(page: Page, config: DownloadConfig = {}): Promise<void> {
     const selectors = config.platformConfig?.download?.selectAll || [
       { selector: 'input[type="checkbox"][aria-label*="Select all"]' },
       { selector: 'thead input[type="checkbox"]' },
@@ -393,7 +393,7 @@ export class DownloadStrategyManager {
     outputDir: string,
     config: DownloadConfig
   ): Promise<string | null> {
-    const downloadPromise = page.context().waitForEvent('download', { timeout: config.timeout || 60000 }).catch(() => null);
+    const downloadPromise = page.waitForEvent('download', { timeout: config.timeout || 60000 }).catch(() => null);
     
     const clicked = await this.applySelector(page, selector, 'click');
     if (!clicked) return null;
@@ -441,7 +441,7 @@ export class DownloadStrategyManager {
 
   private async saveDownload(download: Download, outputDir: string): Promise<string> {
     const startTime = Date.now();
-    const suggestedFilename = await download.suggestedFilename().catch(() => 'download.zip');
+    const suggestedFilename = download.suggestedFilename() || 'download.zip';
     const filePath = path.join(outputDir, suggestedFilename);
 
     try {

@@ -23,7 +23,7 @@ async function work() {
   console.log(`[worker] watching queue '${queueName}'`);
   while (true) {
     try {
-      const resp = await queue.receiveMessages({ numberOfMessages: 1, visibilityTimeout: visibilityTimeoutSec });
+      const resp = await queue.receiveMessages();
       const msg = resp.receivedMessageItems?.[0];
       if (!msg) {
         await sleep(2000);
@@ -45,7 +45,7 @@ async function work() {
       } catch (err) {
         console.error('[worker] job error', err);
         // make message visible again later
-        await queue.updateMessage(msg.messageId, msg.popReceipt, msg.messageText, { visibilityTimeout: 60 });
+        await queue.updateMessage(msg.messageId, msg.popReceipt, msg.messageText, 60);
       }
     } catch (loopErr) {
       console.error('[worker] loop error', loopErr);

@@ -23,7 +23,7 @@ export async function clickDownloadAll(page: Page, buttonSelectorCandidates: str
   // Enhanced clicking with JavaScript fallback
   console.log(`Download: Waiting up to ${Math.round(dlTimeout()/1000)}s for download event after click`);
   const [ download ] = await Promise.all([
-    page.context().waitForEvent('download', { timeout: dlTimeout() }).catch(() => null),
+    page.waitForEvent('download', { timeout: dlTimeout() }).catch(() => null),
     clickElement(page, sel)
   ]);
 
@@ -35,12 +35,12 @@ export async function clickDownloadAll(page: Page, buttonSelectorCandidates: str
     // Try waiting for download again after handling confirmation
     console.log(`Download: Second-chance wait up to ${Math.round(dlTimeout()/1000)}s for download event`);
     const [ secondDownload ] = await Promise.all([
-      page.context().waitForEvent('download', { timeout: dlTimeout() }).catch(() => null),
+      page.waitForEvent('download', { timeout: dlTimeout() }).catch(() => null),
       Promise.resolve() // Already clicked, just wait
     ]);
     
     if (secondDownload) {
-      const suggested = sanitize(await secondDownload.suggestedFilename());
+      const suggested = sanitize(secondDownload.suggestedFilename());
       const to = path.join(outDir, suggested || `bundle.zip`);
       await secondDownload.saveAs(to);
       console.log('Download: Successfully downloaded after confirmation:', to);
@@ -49,7 +49,7 @@ export async function clickDownloadAll(page: Page, buttonSelectorCandidates: str
   }
 
   if (download) {
-    const suggested = sanitize(await download.suggestedFilename());
+    const suggested = sanitize(download.suggestedFilename());
     const to = path.join(outDir, suggested || `bundle.zip`);
     await download.saveAs(to);
     console.log('Download: Successfully downloaded:', to);
@@ -81,7 +81,7 @@ export async function enumerateFileLinks(page: Page, linkSelectorCandidates: str
     
     try {
       const [ download ] = await Promise.all([
-        page.context().waitForEvent('download', { timeout: dlTimeout() }).catch(() => null),
+        page.waitForEvent('download', { timeout: dlTimeout() }).catch(() => null),
         page.evaluate((u) => ((globalThis as any).window as any).location.href = u, href)
       ]);
       
@@ -93,7 +93,7 @@ export async function enumerateFileLinks(page: Page, linkSelectorCandidates: str
       }
       
       if (download) {
-        const suggested = sanitize(await download.suggestedFilename());
+        const suggested = sanitize(download.suggestedFilename());
         const to = path.join(outDir, suggested || `file_${i + 1}`);
         await download.saveAs(to);
         saved.push(to);
