@@ -24,6 +24,8 @@ async function main() {
   const dealroomUrl = getArg('url') || process.env.DEALROOM_URL || '';
   const sharepointFolderId = getArg('spid') || getArg('sharepointId') || getArg('sharepoint_folder_id') || process.env.SHAREPOINT_FOLDER_ID || process.env.sharepoint_folder_id || '';
   const sharepointFolderUrl = getArg('spurl') || getArg('sharepointUrl') || process.env.SHAREPOINT_FOLDER_URL || '';
+  const dlTimeoutArg = getArg('download-timeout-ms');
+  if (dlTimeoutArg && !process.env.DOWNLOAD_TIMEOUT_MS) process.env.DOWNLOAD_TIMEOUT_MS = dlTimeoutArg;
 
   requireVal('url', dealroomUrl);
   if (!sharepointFolderId && !sharepointFolderUrl) {

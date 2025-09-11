@@ -2,6 +2,12 @@ import { Page } from 'playwright';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
+function dlTimeout() {
+  const raw = process.env.DOWNLOAD_TIMEOUT_MS || process.env.UNIVERSAL_DOWNLOAD_TIMEOUT_MS || process.env.PLAYWRIGHT_DOWNLOAD_TIMEOUT_MS;
+  const n = raw ? Number(raw) : undefined;
+  return Number.isFinite(n) && n! > 0 ? n! : 10 * 60 * 1000; // default 10 minutes
+}
+
 export async function clickDownloadAll(page: Page, buttonSelectorCandidates: string[], outDir: string) {
   await fs.mkdir(outDir, { recursive: true });
 
@@ -15,8 +21,9 @@ export async function clickDownloadAll(page: Page, buttonSelectorCandidates: str
   console.log('Download: Found Download All button:', sel);
   
   // Enhanced clicking with JavaScript fallback
+  console.log(`Download: Waiting up to ${Math.round(dlTimeout()/1000)}s for download event after click`);
   const [ download ] = await Promise.all([
-    page.context().waitForEvent('download', { timeout: 45_000 }).catch(() => null),
+    page.context().waitForEvent('download', { timeout: dlTimeout() }).catch(() => null),
     clickElement(page, sel)
   ]);
 
@@ -26,8 +33,9 @@ export async function clickDownloadAll(page: Page, buttonSelectorCandidates: str
     await handleDownloadConfirmation(page);
     
     // Try waiting for download again after handling confirmation
+    console.log(`Download: Second-chance wait up to ${Math.round(dlTimeout()/1000)}s for download event`);
     const [ secondDownload ] = await Promise.all([
-      page.context().waitForEvent('download', { timeout: 30_000 }).catch(() => null),
+      page.context().waitForEvent('download', { timeout: dlTimeout() }).catch(() => null),
       Promise.resolve() // Already clicked, just wait
     ]);
     
@@ -73,7 +81,7 @@ export async function enumerateFileLinks(page: Page, linkSelectorCandidates: str
     
     try {
       const [ download ] = await Promise.all([
-        page.context().waitForEvent('download', { timeout: 30_000 }).catch(() => null),
+        page.context().waitForEvent('download', { timeout: dlTimeout() }).catch(() => null),
         page.evaluate((u) => ((globalThis as any).window as any).location.href = u, href)
       ]);
       

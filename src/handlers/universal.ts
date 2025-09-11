@@ -380,7 +380,10 @@ async function clickDownloadSelected(page: Page, outDir: string) {
   await page.waitForTimeout(800);
 
   // Prepare to capture download BEFORE clicking (context-level to catch popups)
-  let downloadPromise = page.context().waitForEvent('download', { timeout: 60_000 }).catch(() => null);
+  const rawTo = process.env.DOWNLOAD_TIMEOUT_MS || process.env.UNIVERSAL_DOWNLOAD_TIMEOUT_MS || process.env.PLAYWRIGHT_DOWNLOAD_TIMEOUT_MS;
+  const dTo = (rawTo && Number(rawTo) > 0) ? Number(rawTo) : 10 * 60 * 1000; // default 10 min
+  console.log(`Universal Dealroom: Waiting up to ${Math.round(dTo/1000)}s for download to start`);
+  let downloadPromise = page.context().waitForEvent('download', { timeout: dTo }).catch(() => null);
 
   // Try role-based button name first: Download (<size>)
   let clicked = false;
@@ -483,7 +486,9 @@ async function clickDownloadSelected(page: Page, outDir: string) {
 
   let download = await downloadPromise;
   if (!download) {
-    downloadPromise = page.context().waitForEvent('download', { timeout: 45_000 }).catch(() => null);
+    // One more extended wait in case the server is preparing a large archive
+    console.log(`Universal Dealroom: Extended wait up to ${Math.round(dTo/1000)}s for download`);
+    downloadPromise = page.context().waitForEvent('download', { timeout: dTo }).catch(() => null);
     download = await downloadPromise;
   }
   if (!download) return null;
