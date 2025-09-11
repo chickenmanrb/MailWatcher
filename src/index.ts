@@ -8,7 +8,7 @@ import { handleCrexi } from './handlers/crexi.js';
 import { handleRcm } from './handlers/rcm.js';
 import { handleGeneric } from './handlers/generic.js';
 import { handleUniversal } from './handlers/universal.js';
-import { uploadFolderToSharePoint } from './upload/sharepoint.js';
+import { uploadFolderToSharePointByPath } from './upload/sharepoint.js';
 import { writeAudit } from './audit/auditLog.js';
 import { zipArtifacts } from './audit/zipArtifacts.js';
 import type { DealIngestionJob } from './types.js';
@@ -19,7 +19,7 @@ async function run(job: DealIngestionJob) {
   console.log('Starting job:', job.task_name);
   const ndalink = job.nda_url ?? (job.notion_page_id ? await fetchNdaUrl(job.notion_page_id) : undefined);
   // Prefer NDA link first so we complete confidentiality and auto-navigate into the deal room if a popup occurs.
-  const candidateUrls = [ndalink, job.dealroom_url, job.sharepoint_folder_webUrl, ...extractLinks(job.email_body || '')]
+  const candidateUrls = [ndalink, job.dealroom_url, ...extractLinks(job.email_body || '')]
     .filter(Boolean) as string[];
 
   const detection = detectPlatform(candidateUrls);
@@ -50,7 +50,7 @@ async function run(job: DealIngestionJob) {
         }
     }
 
-    const receipts = await uploadFolderToSharePoint(downloadedRoot, job.sharepoint_folder_webUrl, (job as any).sharepoint_folder_id, workingDir).catch(e => { console.error('Upload error:', e); return []; });
+    const receipts = await uploadFolderToSharePointByPath(downloadedRoot, (job as any).sharepoint_server_relative_path, workingDir).catch(e => { console.error('Upload error:', e); return []; });
 
     let entryKind: string | undefined;
     try {
