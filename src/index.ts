@@ -16,7 +16,9 @@ import type { DealIngestionJob } from './types.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-async function run(job: DealIngestionJob) {
+export type RunOptions = { forceUniversal?: boolean };
+
+async function run(job: DealIngestionJob, options: RunOptions = {}) {
   console.log('Starting job:', job.task_name);
   const ndalink = job.nda_url ?? (job.notion_page_id ? await fetchNdaUrl(job.notion_page_id) : undefined);
   // Prefer NDA link first so we complete confidentiality and auto-navigate into the deal room if a popup occurs.
@@ -24,7 +26,8 @@ async function run(job: DealIngestionJob) {
     .filter(Boolean) as string[];
 
   const detection = detectPlatform(candidateUrls);
-  const browser = await chromium.launch({ headless: false }); // Set to false for debugging
+  const headless = process.env.KEEP_BROWSER_OPEN === 'true' ? false : (process.env.HEADLESS ? process.env.HEADLESS === 'true' : true);
+  const browser = await chromium.launch({ headless });
   const ctx = await createBrowserContext(browser, detection.domainKey);
 
   const workingDir = `runs/${Date.now()}-${sanitize(job.task_name)}`;
@@ -32,8 +35,12 @@ async function run(job: DealIngestionJob) {
 
   let downloadedRoot: string;
 
+  const maxMs = Number(process.env.JOB_MAX_MS || 30 * 60 * 1000); // default 30 minutes
+  const runCore = (async () => {
   try {
-    switch (detection.kind) {
+    if (options.forceUniversal) {
+      downloadedRoot = await handleUniversal(page, { job, workingDir, urls: detection.urls });
+    } else switch (detection.kind) {
       case 'buildout':
         downloadedRoot = await handleBuildout(page, { job, workingDir, urls: detection.urls });
         break;
@@ -47,12 +54,10 @@ async function run(job: DealIngestionJob) {
         downloadedRoot = await handleJll(page, { job, workingDir, urls: detection.urls, downloadsPath: (ctx as any)._options?.downloadsPath });
         break;
       default:
-        if (process.env.USE_UNIVERSAL_DEFAULT === 'true') {
-          downloadedRoot = await handleUniversal(page, { job, workingDir, urls: detection.urls });
-        } else {
-          downloadedRoot = await handleGeneric(page, { job, workingDir, urls: detection.urls });
-        }
-    }
+        downloadedRoot = process.env.USE_UNIVERSAL_DEFAULT === 'true'
+          ? await handleUniversal(page, { job, workingDir, urls: detection.urls })
+          : await handleGeneric(page, { job, workingDir, urls: detection.urls });
+      }
 
     const receipts = await uploadFolderToSharePointByPath(downloadedRoot, (job as any).sharepoint_server_relative_path, workingDir).catch(e => { console.error('Upload error:', e); return []; });
 
@@ -91,8 +96,8 @@ async function run(job: DealIngestionJob) {
   } catch (error) {
     console.error('Error during execution:', error);
     
-    // Check if we should keep browser open even on error
-    if (true) { // Temporarily hardcode to always keep browser open
+    // Keep browser open only if explicitly requested
+    if (process.env.KEEP_BROWSER_OPEN === 'true') {
       console.log('==========================================');
       console.log('ERROR OCCURRED - Browser kept open for inspection');
       try {
@@ -156,6 +161,12 @@ async function run(job: DealIngestionJob) {
       await browser.close();
     }
   }
+  })();
+  // Enforce max runtime
+  await Promise.race([
+    runCore,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('JobTimeoutExceeded')), maxMs))
+  ]);
 }
 
 function extractLinks(emailHtml: string): string[] {

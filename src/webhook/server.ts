@@ -1,27 +1,29 @@
 import http from 'node:http';
 import { URL } from 'node:url';
 import { run } from '../index.js';
+import type { RunOptions } from '../index.js';
 import type { DealIngestionJob } from '../types.js';
 
 const PORT = Number(process.env.PORT || 8787);
 const SECRET = process.env.WEBHOOK_SECRET || '';
 
 // Very small in-memory queue to avoid overlapping Playwright runs
-const queue: DealIngestionJob[] = [];
+type Enqueued = { job: DealIngestionJob; options?: RunOptions };
+const queue: Enqueued[] = [];
 let processing = false;
 
-function enqueue(job: DealIngestionJob) {
-  queue.push(job);
+function enqueue(job: DealIngestionJob, options?: RunOptions) {
+  queue.push({ job, options });
   if (!processing) void drain();
 }
 
 async function drain() {
   processing = true;
   while (queue.length) {
-    const job = queue.shift()!;
+    const { job, options } = queue.shift()!;
     try {
-      console.log(`[webhook] start job ${job.task_name}`);
-      await run(job);
+      console.log(`[webhook] start job ${job.task_name}`, options?.forceUniversal ? '(forceUniversal)' : '');
+      await run(job, options);
       console.log(`[webhook] done job ${job.task_name}`);
     } catch (err) {
       console.error('[webhook] job error', err);
@@ -101,12 +103,22 @@ const server = http.createServer(async (req, res) => {
         email_body: data.email_body || data.emailBody || data.body_html || data.body
       };
 
+      // Determine handler options
+      const toBool = (v: any) => typeof v === 'string' ? v.toLowerCase() === 'true' : !!v;
+      const headerForce = toBool(req.headers['x-force-universal'] || '');
+      const queryForce = toBool(url.searchParams.get('forceUniversal') || url.searchParams.get('force_universal') || '');
+      const bodyForce = toBool(data.force_universal ?? data.forceUniversal ?? false);
+      const forceUniversal = headerForce || queryForce || bodyForce || true; // default true per Fixed Flow
+      const forceSource = headerForce ? 'header' : queryForce ? 'query' : bodyForce ? 'body' : 'default';
+
+      console.log(`[webhook] forceUniversal=${forceUniversal} (source=${forceSource})`);
+
       // Minimal required field
       if (!job.sharepoint_server_relative_path) return bad(res, 422, 'sharepoint server-relative path required');
 
       // Enqueue and return fast
-      enqueue(job);
-      return ok(res, 202, { ok: true, enqueued: true });
+      enqueue(job, { forceUniversal });
+      return ok(res, 202, { ok: true, enqueued: true, forceUniversal, forceSource });
     }
 
     bad(res, 404, 'not found');

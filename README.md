@@ -62,6 +62,44 @@ Manual Flow Syntax
 - Example:
   - npm run manual -- --url="https://example.com/form" --universal --email="me@acme.com" --first=Alice --last=Lee --company="Acme" --title="Analyst" --phone="555-111-2222"
 
+## Azure Function Webhook
+
+- Endpoint
+  - `POST https://<your-func-app>.azurewebsites.net/api/webhook`
+  - Optional secret header: `x-zapier-secret: <WEBHOOK_SECRET>`
+
+- Payload (SharePoint destination)
+  - Recommended: `sprel` (server-relative path): `/sites/<Site>/Shared Documents/<Folder>`
+  - Also accepted: `sharepoint_folder_webUrl` or `sharepoint_folder_id`
+  - The function enqueues a unified job with `sharepoint_server_relative_path` for the worker.
+
+- Idempotency
+  - The function computes a hash of `nda_url | dealroom_url | sprel | (x-message-id)` and skips duplicates seen within `IDEMP_HOURS` (default 6h).
+  - Returns `202 { ok: true, enqueued: false, duplicate: true }` on duplicates.
+  - Uses the Function App’s `AzureWebJobsStorage` to store markers (container `idempotency`).
+
+- Logging and cost controls
+  - Set `FUNCTION_DEBUG=false` (default) to avoid payload logging.
+  - Set `FUNCTION_DEBUG=true` (or `DEBUG=true`) to enable minimal debug logs.
+  - Keep App Insights sampling low and consider a daily data cap in Azure Portal to control ingestion costs.
+
+## Worker Runtime Controls
+
+- Headless/browser
+  - `HEADLESS=true` (default) runs Playwright headless.
+  - `KEEP_BROWSER_OPEN=true` forces visible browser and keeps it open after success or errors (for debugging only).
+
+- Job timeout
+  - `JOB_MAX_MS` sets a hard max runtime per job (default 30 minutes). Jobs exceeding this throw `JobTimeoutExceeded` and clean up the browser.
+
+- SharePoint / Graph
+  - `SP_HOSTNAME` (e.g., `contoso.sharepoint.com`)
+  - `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`
+
+- JLL-specific (optional)
+  - `JLL_USERNAME`/`JLL_EMAIL`, `JLL_PASSWORD`
+  - `JLL_ESIGN_NAME`, `JLL_TITLE`, `JLL_COMPANY`
+
 ## JLL Flow
 
 - Overview

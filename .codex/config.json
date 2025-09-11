@@ -2,8 +2,8 @@
   "mcpServers": {
     "playwright": {
       "transport": "stdio",
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"],
+      "command": "node",
+      "args": ["./node_modules/@playwright/mcp/cli.js"],
       "env": {
         "PLAYWRIGHT_BROWSERS_PATH": "0"
       },
