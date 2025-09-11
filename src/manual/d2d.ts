@@ -35,9 +35,16 @@ async function main() {
   const workingDir = path.join('runs', `d2d-${host}-${ts}`);
   await fs.mkdir(workingDir, { recursive: true });
 
+  // Create a dedicated downloads directory within the working directory
+  const downloadsPath = path.join(workingDir, 'browser-downloads');
+  await fs.mkdir(downloadsPath, { recursive: true });
+  console.log('[d2d] configured downloads directory:', downloadsPath);
+
   const browser = await chromium.launch({ headless: false });
   const ctx = await createBrowserContext(browser, host, {
-    recordHar: { path: path.join(workingDir, 'network.har'), content: 'embed' }
+    recordHar: { path: path.join(workingDir, 'network.har'), content: 'embed' },
+    downloadsPath: downloadsPath,  // Explicitly set downloads directory
+    acceptDownloads: true
   });
   await ctx.tracing.start({ screenshots: true, snapshots: true, sources: false });
   const page = await ctx.newPage();
@@ -45,7 +52,7 @@ async function main() {
   try {
     console.log('[d2d] navigating to deal room:', dealroomUrl);
     const job = { task_name: `d2d-${host}-${Date.now()}` } as any;
-    const downloadedRoot = await handleUniversalDealroom(page, { job, workingDir, urls: [dealroomUrl] });
+    const downloadedRoot = await handleUniversalDealroom(page, { job, workingDir, urls: [dealroomUrl], downloadsPath });
     console.log('[d2d] downloaded assets to:', downloadedRoot);
 
     // Inspect downloaded folder contents
