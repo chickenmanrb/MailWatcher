@@ -3,7 +3,7 @@
     "playwright": {
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-playwright"],
+      "args": ["@playwright/mcp@latest"],
       "env": {
         "PLAYWRIGHT_BROWSERS_PATH": "0"
       },

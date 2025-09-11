@@ -7,6 +7,7 @@ import { handleBuildout } from './handlers/buildout.js';
 import { handleCrexi } from './handlers/crexi.js';
 import { handleRcm } from './handlers/rcm.js';
 import { handleGeneric } from './handlers/generic.js';
+import { handleUniversal } from './handlers/universal.js';
 import { uploadFolderToSharePoint } from './upload/sharepoint.js';
 import { writeAudit } from './audit/auditLog.js';
 import { zipArtifacts } from './audit/zipArtifacts.js';
@@ -42,10 +43,14 @@ async function run(job: DealIngestionJob) {
         downloadedRoot = await handleRcm(page, { job, workingDir, urls: detection.urls });
         break;
       default:
-        downloadedRoot = await handleGeneric(page, { job, workingDir, urls: detection.urls });
+        if (process.env.USE_UNIVERSAL_DEFAULT === 'true') {
+          downloadedRoot = await handleUniversal(page, { job, workingDir, urls: detection.urls });
+        } else {
+          downloadedRoot = await handleGeneric(page, { job, workingDir, urls: detection.urls });
+        }
     }
 
-    await uploadFolderToSharePoint(downloadedRoot, job.sharepoint_folder_webUrl, (job as any).sharepoint_folder_id);
+    const receipts = await uploadFolderToSharePoint(downloadedRoot, job.sharepoint_folder_webUrl, (job as any).sharepoint_folder_id, workingDir).catch(e => { console.error('Upload error:', e); return []; });
 
     let entryKind: string | undefined;
     try {
@@ -56,7 +61,7 @@ async function run(job: DealIngestionJob) {
     if (entryKind) {
       console.log(`RCM Entry Kind: ${entryKind}`);
     }
-    const receipt = await writeAudit(workingDir, { job, detection, downloadedRoot, rcm_entry_kind: entryKind });
+    const receipt = await writeAudit(workingDir, { job, detection, downloadedRoot, rcm_entry_kind: entryKind, upload_receipts: receipts });
     await zipArtifacts(workingDir);
     console.log(JSON.stringify({ ok: true, receipt }, null, 2));
     

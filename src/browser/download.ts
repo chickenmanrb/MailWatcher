@@ -16,7 +16,7 @@ export async function clickDownloadAll(page: Page, buttonSelectorCandidates: str
   
   // Enhanced clicking with JavaScript fallback
   const [ download ] = await Promise.all([
-    page.waitForEvent('download', { timeout: 45_000 }).catch(() => null),
+    page.context().waitForEvent('download', { timeout: 45_000 }).catch(() => null),
     clickElement(page, sel)
   ]);
 
@@ -27,7 +27,7 @@ export async function clickDownloadAll(page: Page, buttonSelectorCandidates: str
     
     // Try waiting for download again after handling confirmation
     const [ secondDownload ] = await Promise.all([
-      page.waitForEvent('download', { timeout: 30_000 }).catch(() => null),
+      page.context().waitForEvent('download', { timeout: 30_000 }).catch(() => null),
       Promise.resolve() // Already clicked, just wait
     ]);
     
@@ -73,7 +73,7 @@ export async function enumerateFileLinks(page: Page, linkSelectorCandidates: str
     
     try {
       const [ download ] = await Promise.all([
-        page.waitForEvent('download', { timeout: 30_000 }).catch(() => null),
+        page.context().waitForEvent('download', { timeout: 30_000 }).catch(() => null),
         page.evaluate((u) => ((globalThis as any).window as any).location.href = u, href)
       ]);
       
@@ -150,27 +150,43 @@ async function handleDownloadConfirmation(page: Page) {
   const confirmationSelectors = [
     'button:has-text("Okay")',
     'button:has-text("OK")', 
+    'button:has-text("Ok")',
     'button:has-text("Continue")',
     'button:has-text("Download")',
     'button:has-text("Proceed")',
+    'button:has-text("Create Zip")',
+    'button:has-text("Generate")',
+    'button:has-text("Prepare")',
     'button:has-text("Yes")',
     '[role="button"]:has-text("Okay")',
     '[role="button"]:has-text("OK")',
+    '[role="button"]:has-text("Ok")',
     '.modal button:has-text("Okay")',
     '.dialog button:has-text("OK")'
   ];
   
+  // Check both main frame and iframes
   for (const selector of confirmationSelectors) {
     try {
+      // main frame first
       const element = await page.$(selector);
-      if (element) {
-        const isVisible = await element.isVisible().catch(() => false);
-        if (isVisible) {
-          console.log('Download: Found confirmation dialog, clicking:', selector);
-          await page.evaluate((el) => (el as HTMLElement).click(), element);
-          await page.waitForTimeout(1000);
-          return;
-        }
+      if (element && await element.isVisible().catch(() => false)) {
+        console.log('Download: Found confirmation dialog, clicking:', selector);
+        await page.evaluate((el) => (el as HTMLElement).click(), element);
+        await page.waitForTimeout(1000);
+        return;
+      }
+      // then iframes
+      for (const frame of page.frames()) {
+        try {
+          const fe = await frame.$(selector);
+          if (fe && await fe.isVisible().catch(() => false)) {
+            console.log('Download: Found confirmation dialog in frame, clicking:', selector);
+            await frame.evaluate((el) => (el as HTMLElement).click(), fe);
+            await page.waitForTimeout(1000);
+            return;
+          }
+        } catch {}
       }
     } catch (error) {
       console.log('Download: Error checking confirmation selector:', selector, (error as Error).message);
@@ -178,6 +194,25 @@ async function handleDownloadConfirmation(page: Page) {
   }
   
   console.log('Download: No confirmation dialog found');
+
+  // Try within any visible dialog container generically
+  try {
+    const dialogs = page.locator('[role="dialog"], .modal-dialog, .k-dialog, .k-window');
+    const count = await dialogs.count();
+    for (let i = 0; i < count; i++) {
+      const d = dialogs.nth(i);
+      if (!(await d.isVisible().catch(() => false))) continue;
+      const act = d.locator('button:has-text(/^(Okay|OK|Ok|Yes|Confirm|Proceed|Start|Download|Create|Generate|Prepare)/i)');
+      if (await act.count()) {
+        console.log('Download: Clicking action button inside dialog');
+        await act.first().click({ timeout: 2000 }).catch(async () => {
+          try { await act.first().dispatchEvent('click'); } catch {}
+        });
+        await page.waitForTimeout(1000);
+        return;
+      }
+    }
+  } catch {}
 }
 
 function sanitize(s?: string) {

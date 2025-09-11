@@ -34,8 +34,9 @@ async function clientCredentialsToken(tenant: string, clientId: string, secret: 
 export async function uploadFolderToSharePoint(
   localFolder: string, 
   sharepointFolderWebUrl?: string,
-  sharepointFolderId?: string
-) {
+  sharepointFolderId?: string,
+  auditDir?: string
+): Promise<Array<{ localPath: string; bytes: number; destPath: string; itemId: string; webUrl?: string }>> {
   const client = await graphClient();
   let driveId: string;
   let itemId: string;
@@ -69,6 +70,9 @@ export async function uploadFolderToSharePoint(
     throw new Error('Must provide either sharepointFolderWebUrl or sharepointFolderId');
   }
 
+  const receipts: Array<{ localPath: string; bytes: number; destPath: string; itemId: string; webUrl?: string }> = [];
+  console.log('[sp] upload start:', { localFolder, driveId, itemId });
+
   // Recurse the localFolder and upload
   for await (const filePath of walk(localFolder)) {
     const fileName = path.basename(filePath);
@@ -79,15 +83,141 @@ export async function uploadFolderToSharePoint(
     // Ensure subfolders exist
     await ensureFolders(client, driveId, itemId, path.dirname(destPath));
 
-    if (size < 3.5 * 1024 * 1024) {
-      await client.api(`/drives/${driveId}/items/${itemId}:/${destPath}:/content`)
-        .put(createReadStream(filePath));
-    } else {
+    try {
+      if (size < 3.5 * 1024 * 1024) {
+        const di = await client.api(`/drives/${driveId}/items/${itemId}:/${destPath}:/content`)
+          .put(createReadStream(filePath));
+        const receipt = {
+          localPath: filePath,
+          bytes: size,
+          destPath,
+          itemId: di?.id as string,
+          webUrl: di?.webUrl as string | undefined
+        };
+        receipts.push(receipt);
+        console.log('[sp] uploaded (small):', receipt.destPath, '->', receipt.webUrl || receipt.itemId);
+      } else {
       // Large file upload session
-      const session = await client.api(`/drives/${driveId}/items/${itemId}:/${destPath}:/createUploadSession`)
-        .post({ item: { '@microsoft.graph.conflictBehavior': 'replace', name: fileName }});
-      await uploadLargeFile(session.uploadUrl, filePath);
+        const session = await client.api(`/drives/${driveId}/items/${itemId}:/${destPath}:/createUploadSession`)
+          .post({ item: { '@microsoft.graph.conflictBehavior': 'replace', name: fileName }});
+        await uploadLargeFile(session.uploadUrl, filePath);
+        // Resolve the created/updated drive item to capture IDs/URL
+        const di = await client.api(`/drives/${driveId}/items/${itemId}:/${destPath}`).get();
+        const receipt = {
+          localPath: filePath,
+          bytes: size,
+          destPath,
+          itemId: di?.id as string,
+          webUrl: di?.webUrl as string | undefined
+        };
+        receipts.push(receipt);
+        console.log('[sp] uploaded (large):', receipt.destPath, '->', receipt.webUrl || receipt.itemId);
+      }
+    } catch (e: any) {
+      console.error('[sp] upload error for', destPath, e?.message || e);
+      throw e;
     }
+  }
+
+  // Write audit manifest if requested
+  if (auditDir) {
+    try {
+      await fs.mkdir(auditDir, { recursive: true });
+      const p = path.join(auditDir, 'upload-receipt.json');
+      await fs.writeFile(p, JSON.stringify({ driveId, rootItemId: itemId, files: receipts }, null, 2), 'utf8');
+      console.log('[sp] wrote receipt:', p);
+    } catch (e) {
+      console.warn('[sp] could not write receipt:', (e as any)?.message || e);
+    }
+  }
+  return receipts;
+}
+
+function isGuid(id: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+export async function resolveFolderFromWebUrl(sharepointFolderWebUrl: string): Promise<{ driveId: string; itemId: string; webUrl?: string }> {
+  const client = await graphClient();
+  const target = await client.api('/shares')
+    .query({ q: Buffer.from(sharepointFolderWebUrl).toString('base64url') })
+    .get();
+  const shareId = target?.value?.[0]?.id;
+  if (!shareId) throw new Error('Could not resolve SharePoint folder from webUrl');
+  const driveItem = await client.api(`/shares/${shareId}/driveItem`).get();
+  return { driveId: driveItem.parentReference?.driveId, itemId: driveItem.id, webUrl: driveItem.webUrl };
+}
+
+export async function resolveFolderId(idOrGuid: string): Promise<{ driveId: string; itemId: string; webUrl?: string }> {
+  const client = await graphClient();
+  const site = await client.api('/sites/odysseyresidentialholdings.sharepoint.com:/sites/ORHAcquisitions').get();
+  const drives = await client.api(`/sites/${site.id}/drives`).get();
+  let sharedDocsDrive = drives.value.find((d: any) => d.name === 'Documents');
+  if (!sharedDocsDrive) sharedDocsDrive = drives.value.find((d: any) => d.name === 'Shared Documents');
+  if (!sharedDocsDrive) sharedDocsDrive = drives.value.find((d: any) => (d?.driveType === 'documentLibrary'));
+  if (!sharedDocsDrive) throw new Error('Could not find Documents drive');
+  const driveId: string = sharedDocsDrive.id;
+
+  if (isGuid(idOrGuid)) {
+    // Resolve GUID UniqueId -> DriveItem id
+    const listInfo = await client.api(`/drives/${driveId}/list`).get();
+    const listId = listInfo.id;
+    try {
+      const resp = await client
+        .api(`/sites/${site.id}/lists/${listId}/items`)
+        .header('Prefer', 'HonorNonIndexedQueriesWarningMayFailRandomly=true')
+        .header('ConsistencyLevel', 'eventual')
+        .filter(`fields/UniqueId eq '${idOrGuid}'`)
+        .expand('driveItem($select=id,webUrl,parentReference)')
+        .select('id,fields')
+        .get();
+      const hit = resp?.value?.[0]?.driveItem;
+      if (hit?.id) return { driveId, itemId: hit.id, webUrl: hit.webUrl };
+    } catch (e) {
+      // fall through to search fallback
+    }
+
+    // Fallback A: search the drive and match by SharePoint listItemUniqueId
+    try {
+      const search = await client
+        .api(`/drives/${driveId}/root/search(q='${idOrGuid}')`)
+        .select('id,webUrl,name,sharepointIds')
+        .get();
+      const items: any[] = search?.value ?? [];
+      const match = items.find(i => i?.sharepointIds?.listItemUniqueId?.toLowerCase() === idOrGuid.toLowerCase());
+      if (match?.id) return { driveId, itemId: match.id, webUrl: match.webUrl };
+    } catch (e) {
+      // ignore and throw below
+    }
+
+    // Fallback B: use Graph search API (broader) to match by listItemUniqueId
+    try {
+      const body = {
+        requests: [
+          {
+            entityTypes: ['driveItem'],
+            query: { queryString: `listItemUniqueId:${idOrGuid}` },
+            fields: ['id','name','webUrl','parentReference','sharepointIds']
+          }
+        ]
+      } as any;
+      const resp = await client.api('/search/query').post(body);
+      const hits: any[] = resp?.value?.[0]?.hitsContainers?.[0]?.hits ?? [];
+      const item = hits.map(h => h.resource).find((r: any) => r?.sharepointIds?.listItemUniqueId?.toLowerCase() === idOrGuid.toLowerCase());
+      if (item?.id) return { driveId, itemId: item.id, webUrl: item.webUrl };
+    } catch (e) {
+      // ignore and throw below
+    }
+
+    throw new Error(`Could not resolve GUID ${idOrGuid} to a DriveItem in Documents`);
+  }
+
+  // Assume already a DriveItem id; verify it exists
+  try {
+    const di = await client.api(`/drives/${driveId}/items/${idOrGuid}`).get();
+    return { driveId, itemId: di.id, webUrl: di.webUrl };
+  } catch (e) {
+    throw new Error(`Provided id does not exist in Documents drive: ${idOrGuid}`);
   }
 }
 

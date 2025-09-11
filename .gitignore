@@ -49,3 +49,6 @@ AGENTS.md
 
 # Images/screenshots
 images/
+
+# Local form data (keep secrets out of git)
+formdata.md

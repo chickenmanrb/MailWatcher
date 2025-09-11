@@ -7,6 +7,7 @@ import { handleRcm } from '../handlers/rcm.js';
 import { handleCrexi } from '../handlers/crexi.js';
 import { handleBuildout } from '../handlers/buildout.js';
 import { handleGeneric } from '../handlers/generic.js';
+import { handleUniversal, handleUniversalDealroom } from '../handlers/universal.js';
 import type { DealIngestionJob } from '../types.js';
 
 type Args = {
@@ -18,7 +19,7 @@ type Args = {
   company?: string;
   title?: string;
   phone?: string;
-  handler?: 'rcm' | 'crexi' | 'buildout' | 'generic';
+  handler?: 'rcm' | 'crexi' | 'buildout' | 'generic' | 'universal' | 'universal-dealroom';
   taskName?: string;
 };
 
@@ -30,6 +31,8 @@ function parseArgs(): Args {
     || (process.argv.includes('--crexi') && 'crexi')
     || (process.argv.includes('--buildout') && 'buildout')
     || (process.argv.includes('--generic') && 'generic')
+    || (process.argv.includes('--universal') && 'universal')
+    || (process.argv.includes('--universal-dealroom') && 'universal-dealroom')
     || (get('platform') as any);
   return {
     url,
@@ -254,6 +257,12 @@ async function runManualHandler(args: Args) {
         break;
       case 'buildout':
         downloadedRoot = await handleBuildout(page, { job, workingDir, urls: [args.url] });
+        break;
+      case 'universal':
+        downloadedRoot = await handleUniversal(page, { job, workingDir, urls: [args.url] });
+        break;
+      case 'universal-dealroom':
+        downloadedRoot = await handleUniversalDealroom(page, { job, workingDir, urls: [args.url] });
         break;
       default:
         downloadedRoot = await handleGeneric(page, { job, workingDir, urls: [args.url] });

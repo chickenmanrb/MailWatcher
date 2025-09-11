@@ -43,12 +43,15 @@ export async function handleRcm(page: Page, ctx: { job: DealIngestionJob; workin
   
   // STEP 1.5: "Get Access" form page entry (alternate NDA/consent form)
   if (!hadSalJafar) {
+    console.log('RCM Handler: Attempting Get Access entry...');
     const alt = await tryGetAccessEntry(page);
     if (alt) {
       entryKind = 'RCM_ENTRY_GET_ACCESS';
       await page.waitForLoadState('networkidle').catch(()=>{});
       await page.screenshot({ path: 'runs/rcm-after-get-access.png' }).catch(()=>{});
-      console.log('RCM Handler: Get Access entry handled; current URL:', page.url());
+      console.log('RCM Handler: Get Access entry completed; current URL:', page.url());
+    } else {
+      console.log('RCM Handler: Get Access entry failed or not applicable');
     }
   }
 
@@ -479,21 +482,37 @@ async function tryGetAccessEntry(page: Page) {
       return true; // handled but cannot submit
     }
 
-    // Click likely submit/continue using JS  
-    let submitted = await jsClickByText(page, ['Submit', 'Continue', 'Request Access', 'Get Access', 'Proceed']);
+    // Click likely submit/continue using JS with navigation verification
+    console.log('RCM Handler: Attempting to submit Get Access form...');
+    const currentUrl = page.url();
+    
+    let submitted = await jsClickByText(page, ['Submit', 'Continue', 'Request Access', 'Get Access', 'Proceed'], true);
     if (!submitted) {
+      console.log('RCM Handler: Text-based click failed, trying selectors...');
       submitted = await jsClickSelector(page, [
         'button[type="submit"], input[type="submit"]',
         'button:has-text("Submit")',
         'button:has-text("Continue")',
         'button:has-text("Request Access")',
         'button:has-text("Get Access")'
-      ]);
+      ], true);
     }
+    
     if (submitted) {
       await page.waitForLoadState('networkidle').catch(()=>{});
-      return true;
+      const newUrl = page.url();
+      
+      if (newUrl !== currentUrl) {
+        console.log(`RCM Handler: Get Access form successfully submitted! ${currentUrl} → ${newUrl}`);
+        return true;
+      } else {
+        console.log('RCM Handler: Button clicked but Get Access form did not navigate - may need manual intervention');
+        return false; // Don't claim success if we didn't navigate
+      }
     }
+    
+    console.log('RCM Handler: Could not submit Get Access form');
+    return false;
   } catch {}
   return false;
 }
@@ -617,49 +636,169 @@ async function jsSetCheckbox(page: Page, selectors: string[]) {
   return false;
 }
 
-async function jsClickSelector(page: Page, selectors: string[]) {
+async function jsClickSelector(page: Page, selectors: string[], expectNavigation = false) {
+  const currentUrl = page.url();
+  console.log(`RCM Handler: Looking for buttons with selectors: ${selectors.join(', ')}`);
+  
   for (const frame of page.frames()) {
     for (const sel of selectors) {
       const el = await frame.$(sel);
       if (!el) continue;
+      
+      const elementInfo = await frame.evaluate((node: Element) => {
+        const el = node as HTMLElement;
+        return {
+          text: (el.innerText || el.textContent || '').trim(),
+          tagName: el.tagName.toLowerCase(),
+          disabled: (el as any).disabled || false
+        };
+      }, el);
+      
+      console.log(`RCM Handler: Found element with selector "${sel}": ${elementInfo.tagName}:"${elementInfo.text}"${elementInfo.disabled ? ' (disabled)' : ''}`);
+      
+      if (elementInfo.disabled) {
+        console.log('RCM Handler: Element is disabled, skipping');
+        continue;
+      }
+      
       const ok = await frame.evaluate((node: Element) => {
         try {
-          (node as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'center' });
+          const el = node as HTMLElement;
+          el.scrollIntoView?.({ block: 'center', inline: 'center' });
+          
+          // Try multiple click methods
           const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
           node.dispatchEvent(evt);
-          (node as HTMLElement).click?.();
+          el.click?.();
+          
+          // If it's a form button, try submitting the form
+          const form = el.closest('form');
+          if (form && (el as any).type === 'submit') {
+            console.log('Attempting form submission via selector');
+            form.submit();
+          }
+          
           return true;
-        } catch { return false; }
+        } catch (e) {
+          console.log('Selector click failed:', e);
+          return false;
+        }
       }, el).catch(() => false);
-      if (ok) return true;
+      
+      if (ok) {
+        console.log(`RCM Handler: Successfully clicked element: "${elementInfo.text}" (${elementInfo.tagName})`);
+        
+        if (expectNavigation) {
+          console.log('RCM Handler: Waiting for navigation...');
+          await page.waitForTimeout(2000); // Wait for potential navigation
+          const newUrl = page.url();
+          
+          if (newUrl !== currentUrl) {
+            console.log(`RCM Handler: Navigation successful! ${currentUrl} → ${newUrl}`);
+            await page.waitForLoadState('networkidle').catch(() => {});
+            return true;
+          } else {
+            console.log('RCM Handler: Element clicked but no navigation occurred');
+            return true; // Still return true as element was clicked
+          }
+        } else {
+          await page.waitForTimeout(500); // Small delay for non-navigation clicks
+          return true;
+        }
+      }
     }
   }
+  
+  console.log('RCM Handler: No matching selectors found or clickable');
   return false;
 }
 
-async function jsClickByText(page: Page, texts: string[]) {
+async function jsClickByText(page: Page, texts: string[], expectNavigation = false) {
+  const currentUrl = page.url();
+  console.log(`RCM Handler: Looking for buttons with text: ${texts.join(', ')}`);
+  
+  // First, find and log all potential buttons
+  const buttons = await page.evaluate((needles: string[]) => {
+    const candidates = Array.from(document.querySelectorAll('button, a, label, input[type="button"], input[type="submit"]')) as HTMLElement[];
+    const found: { text: string; tagName: string; disabled: boolean; visible: boolean }[] = [];
+    
+    for (const el of candidates) {
+      const txt = (el.innerText || el.textContent || '').trim();
+      if (txt) {
+        const style = window.getComputedStyle(el);
+        found.push({
+          text: txt,
+          tagName: el.tagName.toLowerCase(),
+          disabled: (el as any).disabled || false,
+          visible: style.display !== 'none' && style.visibility !== 'hidden'
+        });
+      }
+    }
+    return found;
+  });
+  
+  console.log(`RCM Handler: Found ${buttons.length} buttons on page:`, buttons.map(b => `${b.tagName}:"${b.text}"(${b.disabled ? 'disabled' : 'enabled'}, ${b.visible ? 'visible' : 'hidden'})`));
+  
   for (const frame of page.frames()) {
-    const ok = await frame.evaluate((needles: string[]) => {
+    const clickResult = await frame.evaluate((needles: string[]) => {
       const candidates = Array.from(document.querySelectorAll('button, a, label, input[type="button"], input[type="submit"]')) as HTMLElement[];
       for (const n of needles) {
         const re = new RegExp(n, 'i');
         for (const el of candidates) {
           const txt = (el.innerText || el.textContent || '').trim();
           if (txt && re.test(txt)) {
+            console.log(`Found matching button: "${txt}" (${el.tagName})`);
             try {
               el.scrollIntoView?.({ block: 'center', inline: 'center' });
+              
+              // Try multiple click methods
               const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
               el.dispatchEvent(evt);
               el.click?.();
-              return true;
-            } catch {}
+              
+              // If it's a form button, try submitting the form
+              const form = el.closest('form');
+              if (form && (el as any).type === 'submit') {
+                console.log('Attempting form submission');
+                form.submit();
+              }
+              
+              return { clicked: true, text: txt, tagName: el.tagName };
+            } catch (e) {
+              console.log('Click failed:', e);
+              return { clicked: false, text: txt, error: e.message };
+            }
           }
         }
       }
-      return false;
-    }, texts).catch(() => false);
-    if (ok) return true;
+      return { clicked: false };
+    }, texts).catch(() => ({ clicked: false }));
+    
+    if (clickResult.clicked) {
+      console.log(`RCM Handler: Successfully clicked button: "${clickResult.text}" (${clickResult.tagName})`);
+      
+      if (expectNavigation) {
+        console.log('RCM Handler: Waiting for navigation...');
+        await page.waitForTimeout(2000); // Wait for potential navigation
+        const newUrl = page.url();
+        
+        if (newUrl !== currentUrl) {
+          console.log(`RCM Handler: Navigation successful! ${currentUrl} → ${newUrl}`);
+          await page.waitForLoadState('networkidle').catch(() => {});
+          return true;
+        } else {
+          console.log('RCM Handler: Button clicked but no navigation occurred');
+          // Still return true as button was clicked, let caller decide if navigation is required
+          return true;
+        }
+      } else {
+        await page.waitForTimeout(500); // Small delay for non-navigation clicks
+        return true;
+      }
+    }
   }
+  
+  console.log('RCM Handler: No matching buttons found or clickable');
   return false;
 }
 
@@ -675,24 +814,30 @@ async function tryAdvanceFromMainCa(page: Page) {
     console.log('RCM Handler: Main CA validation errors present; not submitting.');
     return false;
   }
+  console.log(`RCM Handler: Current URL before attempting to advance: ${url}`);
+  
   let advanced = await jsClickByText(page, [
-    'Get Access', 'Request Access', 'Continue', 'Proceed', 'Submit', 'Next', 'I Agree', 'Accept'
-  ]);
+    'I Agree', 'Get Access', 'Request Access', 'Continue', 'Proceed', 'Submit', 'Next', 'Accept'
+  ], true); // Expect navigation
+  
   if (!advanced) {
+    console.log('RCM Handler: Text-based advance failed, scrolling and retrying...');
     await scrollAllFrames(page);
     await page.waitForTimeout(200);
     advanced = await jsClickByText(page, [
-      'Get Access', 'Request Access', 'Continue', 'Proceed', 'Submit', 'Next', 'I Agree', 'Accept'
-    ]);
+      'I Agree', 'Get Access', 'Request Access', 'Continue', 'Proceed', 'Submit', 'Next', 'Accept'
+    ], true);
   }
+  
   if (!advanced) {
+    console.log('RCM Handler: Text retry failed, trying selectors...');
     advanced = await jsClickSelector(page, [
-      'button:has-text("Get Access")', 'a:has-text("Get Access")', '[role="button"]:has-text("Get Access")',
+      'button:has-text("I Agree")', 'button:has-text("Get Access")', 'a:has-text("Get Access")', '[role="button"]:has-text("Get Access")',
       'button:has-text("Request Access")', 'a:has-text("Request Access")',
       'button:has-text("Continue")', 'button:has-text("Proceed")',
       'button:has-text("Submit")', 'input[type="submit"]',
-      'button:has-text("I Agree")', 'button:has-text("Accept")'
-    ]);
+      'button:has-text("Accept")', 'button[value*="Agree"], input[value*="Agree"]'
+    ], true); // Expect navigation
   }
   if (advanced) {
     console.log('RCM Handler: Advanced from Main CA.');
