@@ -223,7 +223,7 @@ async function runManualHandler(args: Args) {
 
   const job: DealIngestionJob = {
     task_name: args.taskName || `manual-${args.handler}-${host}`,
-    sharepoint_folder_webUrl: undefined,
+    sharepoint_server_relative_path: undefined,
     email_body: undefined
   } as any;
 

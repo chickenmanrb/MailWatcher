@@ -23,12 +23,11 @@ module.exports = async function (context, req) {
       try { data = JSON.parse(data); } catch {}
     }
     if (Array.isArray(data)) data = data[0] || {};
-    // Minimal validation: require SharePoint folder reference (webUrl or id)
+    // Minimal validation: require SharePoint server-relative path
     const sp = data.sharepoint || {};
-    const spWebUrl = sp.drive_id || data['sharepoint.drive_id'] || data.sharepoint_folder_webUrl || data.sharepointFolderWebUrl || data.sharepointFolderUrl;
-    const spId = sp.id || data.sharepoint_id;
-    if (!spWebUrl && !spId) {
-      context.res = { status: 422, headers: { 'content-type': 'application/json' }, body: { ok: false, error: 'sharepoint folder reference required', keys: Object.keys(data || {}), nestedSharepointKeys: Object.keys(sp || {}) } };
+    const spRel = data.sprel || data.sharepoint_server_relative_path || sp.server_relative_path || sp.serverRelativePath || data.sharepointFolderPath;
+    if (!spRel) {
+      context.res = { status: 422, headers: { 'content-type': 'application/json' }, body: { ok: false, error: 'sharepoint server-relative path required', keys: Object.keys(data || {}), nestedSharepointKeys: Object.keys(sp || {}) } };
       return;
     }
 
@@ -40,8 +39,7 @@ module.exports = async function (context, req) {
       notion_page_id: data.notion_page_id || data.notionPageId,
       nda_url: data.nda_link || data.nda_url || data.ndaUrl,
       dealroom_url: data.dealroom_link || data.dealroom_url || data.dealroomUrl,
-      sharepoint_folder_webUrl: spWebUrl,
-      sharepoint_folder_id: spId,
+      sharepoint_server_relative_path: spRel,
       email_body: data.email_body || data.emailBody || data.body_html || data.body
     };
     context.bindings.job = JSON.stringify(job);

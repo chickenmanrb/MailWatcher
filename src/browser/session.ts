@@ -7,9 +7,14 @@ export async function createBrowserContext(browser: Browser, domainKey: string, 
   await fs.mkdir(stateDir, { recursive: true });
   const stateFile = path.join(stateDir, `${domainKey}.json`);
 
+  // Create a dedicated downloads directory if not specified
+  const downloadsPath = options.downloadsPath || path.join(process.cwd(), 'runs', 'downloads-temp', domainKey);
+  await fs.mkdir(downloadsPath, { recursive: true });
+
   const ctx = await browser.newContext({
     storageState: (await fileExists(stateFile)) ? stateFile : undefined,
     acceptDownloads: true,
+    downloadsPath,
     ...options
   });
 

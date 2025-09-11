@@ -96,14 +96,13 @@ const server = http.createServer(async (req, res) => {
         // Prefer explicit NDA and dealroom links from Zapier
         nda_url: data.nda_link || data.nda_url || data.ndaUrl,
         dealroom_url: data.dealroom_link || data.dealroom_url || data.dealroomUrl,
-        // Accept nested sharepoint.drive_id or dotted key fallback
-        sharepoint_folder_webUrl: sp.drive_id || data['sharepoint.drive_id'] || data.sharepoint_folder_webUrl || data.sharepointFolderUrl || data.sharepointFolderWebUrl,
-        sharepoint_folder_id: sp.id || data.sharepoint_id,
+        // Server-relative SharePoint path (preferred)
+        sharepoint_server_relative_path: data.sprel || data.sharepoint_server_relative_path || sp.server_relative_path || sp.serverRelativePath || data.sharepointFolderPath,
         email_body: data.email_body || data.emailBody || data.body_html || data.body
       };
 
       // Minimal required field
-      if (!job.sharepoint_folder_webUrl && !job.sharepoint_folder_id) return bad(res, 422, 'sharepoint folder reference required');
+      if (!job.sharepoint_server_relative_path) return bad(res, 422, 'sharepoint server-relative path required');
 
       // Enqueue and return fast
       enqueue(job);

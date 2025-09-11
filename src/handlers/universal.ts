@@ -2,6 +2,8 @@ import type { Page, Frame } from 'playwright';
 import { clickDownloadAll, enumerateFileLinks } from '../browser/download.js';
 import type { DealIngestionJob } from '../types.js';
 import { loadFormData } from '../config/formData.js';
+import { DownloadMonitor } from '../utils/downloadMonitor.js';
+import { FileSystemMonitor } from '../utils/fileSystemMonitor.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
@@ -183,7 +185,7 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
   await activePage.screenshot({ path: path.join(ctx.workingDir, 'universal-documents-selected.png') }).catch(() => {});
 
   // Try the context-specific Download button (e.g., "Download (123 KB)")
-  const selectedBundle = await clickDownloadSelected(activePage, outDir).catch(() => null);
+  const selectedBundle = await clickDownloadSelected(activePage, outDir, ctx.downloadsPath).catch(() => null);
   if (selectedBundle) return outDir;
 
   // Otherwise try a visible "Download All" UI
@@ -205,7 +207,7 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
 // Subset handler: start at Deal Room part of the flow.
 // Skips consent/auto-fill and focuses on entering the room (if needed),
 // navigating to Documents/Files and downloading artifacts.
-export async function handleUniversalDealroom(page: Page, ctx: { job: DealIngestionJob; workingDir: string; urls: string[] }): Promise<string> {
+export async function handleUniversalDealroom(page: Page, ctx: { job: DealIngestionJob; workingDir: string; urls: string[]; downloadsPath?: string }): Promise<string> {
   const outDir = path.join(ctx.workingDir, 'downloads');
   await fs.mkdir(outDir, { recursive: true });
 
@@ -239,7 +241,7 @@ export async function handleUniversalDealroom(page: Page, ctx: { job: DealIngest
   await trySelectAllDocuments(activePage);
   await activePage.screenshot({ path: path.join(ctx.workingDir, 'universal-dr-03a-selected.png') }).catch(() => {});
 
-  const selectedBundle = await clickDownloadSelected(activePage, outDir).catch(() => null);
+  const selectedBundle = await clickDownloadSelected(activePage, outDir, ctx.downloadsPath).catch(() => null);
   if (selectedBundle) return outDir;
 
   // Try Download All then fallback to enumerating file links
@@ -375,15 +377,54 @@ async function trySelectAllDocuments(page: Page) {
   return false;
 }
 
-async function clickDownloadSelected(page: Page, outDir: string) {
+async function clickDownloadSelected(page: Page, outDir: string, downloadsPath?: string) {
   // Wait a moment for selections to register
   await page.waitForTimeout(800);
 
+  // For RCM, we need to monitor for downloads at the context level since they may happen in popups
+  const context = page.context();
+  
+  // Initialize FileSystemMonitors BEFORE clicking to capture baseline
+  // Monitor both the context downloads directory (if provided) and the OS default/RCM_DOWNLOAD_DIR
+  const fsMonitors: FileSystemMonitor[] = [];
+  const commonMonitorOpts = {
+    stagingDir: outDir,
+    matchers: [
+      /Unlimited Saving II/i,
+      /\.zip$/i,
+      /\.csv$/i,
+      /\.tmp$/i,
+      () => true
+    ],
+    appearTimeoutMs: 60_000,
+    stableTimeoutMs: 120_000,
+    forceZipExtension: true
+  } as const;
+  if (downloadsPath) {
+    fsMonitors.push(new FileSystemMonitor({ ...commonMonitorOpts, downloadsDir: downloadsPath }));
+  }
+  // Always add a monitor for the OS default/RCM_DOWNLOAD_DIR
+  fsMonitors.push(new FileSystemMonitor({ ...commonMonitorOpts }));
+  for (const m of fsMonitors) {
+    console.log('Universal Dealroom: FileSystemMonitor configured', {
+      downloadsDir: (m as any).downloadsDir,
+      stagingDir: (m as any).stagingDir,
+    });
+    await m.initBaseline();
+  }
+  
+  // Baseline for monitors already captured above
+  
+  // Set up Playwright download monitoring as fallback for non-RCM sites
+  const downloads: any[] = [];
+  const downloadHandler = (download: any) => {
+    console.log('Universal Dealroom: Download started:', download.suggestedFilename());
+    downloads.push(download);
+  };
+  context.on('download', downloadHandler);
+
   // Prepare to capture download BEFORE clicking (context-level to catch popups)
-  const rawTo = process.env.DOWNLOAD_TIMEOUT_MS || process.env.UNIVERSAL_DOWNLOAD_TIMEOUT_MS || process.env.PLAYWRIGHT_DOWNLOAD_TIMEOUT_MS;
-  const dTo = (rawTo && Number(rawTo) > 0) ? Number(rawTo) : 10 * 60 * 1000; // default 10 min
-  console.log(`Universal Dealroom: Waiting up to ${Math.round(dTo/1000)}s for download to start`);
-  let downloadPromise = page.context().waitForEvent('download', { timeout: dTo }).catch(() => null);
+  let downloadPromise = page.context().waitForEvent('download', { timeout: 5_000 }).catch(() => null);
 
   // Try role-based button name first: Download (<size>)
   let clicked = false;
@@ -410,8 +451,19 @@ async function clickDownloadSelected(page: Page, outDir: string) {
     if (!clicked) return null;
   }
 
-  // Handle potential confirmation popup
-  await page.waitForTimeout(600);
+  // Prepare background capture via FileSystemMonitors (handles silent background downloads)
+  const fsCapturePromises = fsMonitors.map(m =>
+    m.captureDownload()
+     .then(p => ({ type: 'fs' as const, path: p, monitorDir: (m as any).downloadsDir }))
+     .catch(err => { console.log('Universal Dealroom: FileSystemMonitor capture error (will fallback):', (m as any).downloadsDir, err?.message || err); return null; })
+  );
+
+  // Handle potential confirmation popup without blocking FS monitor
+  console.log('Universal Dealroom: Checking for confirmation dialog while monitoring filesystem...');
+  await page.waitForTimeout(1500).catch(()=>{});  // brief pause for dialog
+  // Screenshot for diagnostics
+  await page.screenshot({ path: path.join(path.dirname(outDir), 'universal-after-download-click.png') }).catch(() => {});
+  
   const confirmationSelectors = [
     'button:has-text("Okay")',
     'button:has-text("OK")',
@@ -476,7 +528,6 @@ async function clickDownloadSelected(page: Page, outDir: string) {
     }
   } catch {}
 
-  // If initial promise returned null (missed early event), set a fresh waiter and give it another short window
   // If a popup opened, bring it to front and let confirmations be handled there too
   const popup = await popupPromise;
   if (popup) {
@@ -484,21 +535,74 @@ async function clickDownloadSelected(page: Page, outDir: string) {
     try { await popup.bringToFront(); } catch {}
   }
 
-  let download = await downloadPromise;
-  if (!download) {
-    // One more extended wait in case the server is preparing a large archive
-    console.log(`Universal Dealroom: Extended wait up to ${Math.round(dTo/1000)}s for download`);
-    downloadPromise = page.context().waitForEvent('download', { timeout: dTo }).catch(() => null);
-    download = await downloadPromise;
+  // Race Playwright's download event with FileSystemMonitor captures
+  const pwDownloadPromise = page.context().waitForEvent('download', { timeout: 60_000 })
+    .then(d => ({ type: 'pw' as const, download: d }))
+    .catch(() => null);
+
+  // First winner decides the path forward
+  let winner = await Promise.race([pwDownloadPromise, ...fsCapturePromises]);
+
+  // If nothing won the initial race, await whichever completes next
+  if (!winner) {
+    const results = await Promise.all([pwDownloadPromise, ...fsCapturePromises]);
+    winner = results.find(Boolean) as any;
   }
-  if (!download) return null;
+
+  // Clean up the event listener
+  context.off('download', downloadHandler);
+
+  if (winner && winner.type === 'fs') {
+    console.log('Universal Dealroom: Download captured via FileSystemMonitor:', winner.path, 'from', (winner as any).monitorDir);
+    return winner.path;
+  }
+
+  // Playwright download path
+  let download = winner && winner.type === 'pw' ? winner.download : null;
+  if (!download && downloads.length > 0) {
+    download = downloads[0];
+    console.log('Universal Dealroom: Using download from event handler');
+  }
+
+  if (!download) {
+    // Fallback to old DownloadMonitor for backwards compatibility
+    console.log('Universal Dealroom: No download captured; falling back to legacy monitor');
+    const browserDownloadPath = downloadsPath || 
+                                (context as any)._options?.downloadsPath || 
+                                path.join(process.cwd(), 'runs', 'downloads-temp', 'my.rcm1.com');
+    const monitor = new DownloadMonitor(browserDownloadPath);
+    await monitor.initialize();
+    const downloadedFile = await monitor.waitForNewDownload({ timeout: 30000, pollInterval: 500 });
+    if (downloadedFile) {
+      const fileName = path.basename(downloadedFile);
+      const destPath = path.join(outDir, fileName);
+      try {
+        await fs.copyFile(downloadedFile, destPath);
+        await fs.unlink(downloadedFile).catch(() => {});
+        console.log('Universal Dealroom: Download captured via old monitor:', fileName);
+        return destPath;
+      } catch (err2) {
+        console.log('Universal Dealroom: Error moving download:', err2);
+      }
+    }
+    console.log('Universal Dealroom: No download captured by any method');
+    return null;
+  }
+
   const suggested = await download.suggestedFilename().catch(() => 'bundle.zip');
   const to = path.join(outDir, suggested || 'bundle.zip');
   try {
     await download.saveAs(to);
     console.log('Universal Dealroom: Download saved to', to);
-  } catch {
-    await download.saveAs(path.join(outDir, 'bundle.zip'));
+  } catch (err) {
+    console.log('Universal Dealroom: Error saving download:', err);
+    try {
+      await download.saveAs(path.join(outDir, 'bundle.zip'));
+      console.log('Universal Dealroom: Download saved as bundle.zip');
+    } catch (err2) {
+      console.log('Universal Dealroom: Failed to save download:', err2);
+      return null;
+    }
   }
   return to;
 }

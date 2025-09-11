@@ -3,8 +3,7 @@ export type DealIngestionJob = {
   notion_page_id?: string;
   nda_url?: string;
   dealroom_url?: string;
-  sharepoint_folder_webUrl?: string;  // Legacy support for existing URLs
-  sharepoint_folder_id?: string;      // New: Direct SharePoint folder ID
+  sharepoint_server_relative_path?: string; // e.g., /sites/ORHAcquisitions/Shared Documents/Folder
   email_body?: string;
 };
 
@@ -14,8 +13,7 @@ export const DealIngestionJobKeys = [
   'notion_page_id',
   'nda_url',
   'dealroom_url',
-  'sharepoint_folder_webUrl',
-  'sharepoint_folder_id',
+  'sharepoint_server_relative_path',
   'email_body'
 ] as const;
 export type DealIngestionJobKey = typeof DealIngestionJobKeys[number];

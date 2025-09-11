@@ -2,17 +2,35 @@ import 'dotenv/config';
 import { chromium } from 'playwright';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { createBrowserContext } from '../browser/session.js';
 import { handleUniversalDealroom } from '../handlers/universal.js';
-import { uploadFolderToSharePoint, resolveFolderId } from '../upload/sharepoint.js';
+import { uploadFolderToSharePointByPath } from '../upload/sharepoint.js';
 
 function getArg(k: string) {
-  const hit = process.argv.find(a => a.startsWith(`--${k}=`));
-  return hit ? hit.split('=').slice(1).join('=') : undefined;
+  const argv = process.argv;
+  // Support both --key=value and --key value forms
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === `--${k}`) {
+      const next = argv[i + 1];
+      if (next && !next.startsWith('--')) return next;
+    }
+    if (a.startsWith(`--${k}=`)) {
+      return a.substring(`--${k}=`.length);
+    }
+  }
+  // npm exposes --key=value as npm_config_key in env when invoked via npm scripts
+  const npmCfg = process.env[`npm_config_${k}` as keyof NodeJS.ProcessEnv] as string | undefined;
+  return npmCfg;
 }
 
 function requireVal(name: string, val?: string) {
-  if (!val || !val.trim()) throw new Error(`Missing required ${name}. Provide via --${name.replaceAll('_','-')}=... or environment variable.`);
+  if (!val || !val.trim()) {
+    const flag = `--${name.replaceAll('_','-')}`;
+    const hint = name.toLowerCase() === 'url'
+      ? ` If the URL contains & or ?, quote it in your shell (e.g., PowerShell: ${flag}="https://...&...", Bash: ${flag}='https://...&...').`
+      : '';
+    throw new Error(`Missing required ${name}. Provide via ${flag}=... or environment variable.${hint}`);
+  }
   return val.trim();
 }
 
@@ -22,14 +40,11 @@ function safeHost(u: string) {
 
 async function main() {
   const dealroomUrl = getArg('url') || process.env.DEALROOM_URL || '';
-  const sharepointFolderId = getArg('spid') || getArg('sharepointId') || getArg('sharepoint_folder_id') || process.env.SHAREPOINT_FOLDER_ID || process.env.sharepoint_folder_id || '';
-  const sharepointFolderUrl = getArg('spurl') || getArg('sharepointUrl') || process.env.SHAREPOINT_FOLDER_URL || '';
-  const dlTimeoutArg = getArg('download-timeout-ms');
-  if (dlTimeoutArg && !process.env.DOWNLOAD_TIMEOUT_MS) process.env.DOWNLOAD_TIMEOUT_MS = dlTimeoutArg;
+  const sharepointServerRelativePath = getArg('sprel') || getArg('serverRelativePath') || process.env.SHAREPOINT_SERVER_RELATIVE_PATH || '';
 
   requireVal('url', dealroomUrl);
-  if (!sharepointFolderId && !sharepointFolderUrl) {
-    throw new Error('Missing SharePoint destination. Provide either --spid=<DriveItem ID or UniqueId GUID> or --spurl=<folder web URL>.');
+  if (!sharepointServerRelativePath) {
+    throw new Error('Missing SharePoint destination. Provide --sprel="/sites/<SiteName>/Shared Documents/<FolderPath>".');
   }
 
   const host = safeHost(dealroomUrl);
@@ -37,17 +52,27 @@ async function main() {
   const workingDir = path.join('runs', `d2d-${host}-${ts}`);
   await fs.mkdir(workingDir, { recursive: true });
 
-  const browser = await chromium.launch({ headless: false });
-  const ctx = await createBrowserContext(browser, host, {
+  // Create a dedicated downloads directory within the working directory
+  const downloadsPath = path.join(workingDir, 'browser-downloads');
+  await fs.mkdir(downloadsPath, { recursive: true });
+  console.log('[d2d] configured downloads directory:', downloadsPath);
+
+  // Use a persistent context so we can reliably control the download directory
+  const userDataDir = path.join(workingDir, 'user-data');
+  await fs.mkdir(userDataDir, { recursive: true });
+  const ctx = await chromium.launchPersistentContext(userDataDir, {
+    headless: false,
+    acceptDownloads: true,
+    downloadsPath: downloadsPath,
     recordHar: { path: path.join(workingDir, 'network.har'), content: 'embed' }
-  });
+  } as any);
   await ctx.tracing.start({ screenshots: true, snapshots: true, sources: false });
   const page = await ctx.newPage();
 
   try {
     console.log('[d2d] navigating to deal room:', dealroomUrl);
     const job = { task_name: `d2d-${host}-${Date.now()}` } as any;
-    const downloadedRoot = await handleUniversalDealroom(page, { job, workingDir, urls: [dealroomUrl] });
+    const downloadedRoot = await handleUniversalDealroom(page, { job, workingDir, urls: [dealroomUrl], downloadsPath });
     console.log('[d2d] downloaded assets to:', downloadedRoot);
 
     // Inspect downloaded folder contents
@@ -60,19 +85,8 @@ async function main() {
       console.warn('[d2d] No files found to upload. See screenshots in workingDir and download-contents.json');
     }
 
-    let receipts: Array<any> = [];
-    if (sharepointFolderUrl) {
-      console.log('[d2d] uploading to SharePoint via webUrl');
-      receipts = await uploadFolderToSharePoint(downloadedRoot, sharepointFolderUrl, undefined, workingDir);
-    } else {
-      // Resolve GUID uniqueId -> DriveItem id if needed
-      const resolved = await resolveFolderId(sharepointFolderId).catch((e) => {
-        console.error('[d2d] could not resolve SharePoint id', e?.message || e);
-        throw e;
-      });
-      console.log('[d2d] uploading to SharePoint folder:', { driveId: resolved.driveId, itemId: resolved.itemId, webUrl: resolved.webUrl || '' });
-      receipts = await uploadFolderToSharePoint(downloadedRoot, undefined, resolved.itemId, workingDir);
-    }
+    console.log('[d2d] uploading to SharePoint via server-relative path');
+    const receipts = await uploadFolderToSharePointByPath(downloadedRoot, sharepointServerRelativePath, workingDir);
     console.log('[d2d] upload complete. Receipt entries:', receipts.length);
     for (const r of receipts) {
       console.log(`  + ${path.basename(r.localPath)} -> ${r.webUrl || r.itemId} (${r.bytes} bytes)`);
@@ -88,7 +102,6 @@ async function main() {
     if (process.env.KEEP_BROWSER_OPEN !== 'true') {
       try { await ctx.tracing.stop({ path: path.join(workingDir, 'trace.zip') }); } catch {}
       try { await ctx.close(); } catch {}
-      try { await browser.close(); } catch {}
     } else {
       console.log('[d2d] Browser kept open after error. Press Ctrl+C to exit.');
       await new Promise(() => {});
@@ -98,7 +111,6 @@ async function main() {
 
   try { await ctx.tracing.stop({ path: path.join(workingDir, 'trace.zip') }); } catch {}
   await ctx.close();
-  await browser.close();
 }
 
 async function* walk(dir: string): AsyncGenerator<string> {
