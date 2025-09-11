@@ -10,6 +10,8 @@ export interface FileSystemMonitorOptions {
   downloadsDir?: string;
   /** Where we'll move the finished file. */
   stagingDir?: string;
+  /** If true, append .zip to files that lack an extension (or look like temp/GUID). */
+  forceZipExtension?: boolean;
   /** How long to wait for any new file to appear, ms. */
   appearTimeoutMs?: number; // default 60s
   /** How long to wait for the chosen file to become stable, ms. */
@@ -91,6 +93,7 @@ export class FileSystemMonitor {
   readonly pollMs: number;
   readonly stableWindowMs: number;
   readonly matchers?: Matcher[];
+  readonly forceZipExtension: boolean;
 
   private baseline: Map<string, FileEntry> = new Map();
 
@@ -105,6 +108,7 @@ export class FileSystemMonitor {
     this.pollMs = options.pollMs ?? 400;
     this.stableWindowMs = options.stableWindowMs ?? 1_500;
     this.matchers = options.matchers;
+    this.forceZipExtension = options.forceZipExtension ?? false;
   }
 
   async initBaseline(): Promise<void> {
@@ -224,7 +228,18 @@ export class FileSystemMonitor {
 
   async moveToStaging(entry: FileEntry): Promise<string> {
     // Remove temp suffixes if present
-    const finalName = entry.name.replace(/(\.crdownload|\.part|\.download|\.tmp)$/i, '');
+    let finalName = entry.name.replace(/(\.crdownload|\.part|\.download|\.tmp)$/i, '');
+
+    // If requested, ensure .zip extension when missing or when the file looks like a GUID-name
+    if (this.forceZipExtension) {
+      const hasExt = /\.[a-z0-9]{2,6}$/i.test(finalName);
+      const looksGuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path.parse(finalName).name);
+      if (!hasExt || looksGuid) {
+        if (!finalName.toLowerCase().endsWith('.zip')) finalName += '.zip';
+        console.log(`[FileSystemMonitor] Appending .zip extension to finalized file name -> ${finalName}`);
+      }
+    }
+
     const destPath = path.join(this.stagingDir, finalName || entry.name);
     
     console.log(`[FileSystemMonitor] Moving file to staging: ${entry.full} -> ${destPath}`);

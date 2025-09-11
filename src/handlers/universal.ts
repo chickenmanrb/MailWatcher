@@ -397,7 +397,8 @@ async function clickDownloadSelected(page: Page, outDir: string, downloadsPath?:
       () => true
     ],
     appearTimeoutMs: 60_000,
-    stableTimeoutMs: 120_000
+    stableTimeoutMs: 120_000,
+    forceZipExtension: true
   } as const;
   if (downloadsPath) {
     fsMonitors.push(new FileSystemMonitor({ ...commonMonitorOpts, downloadsDir: downloadsPath }));
