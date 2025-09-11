@@ -1,0 +1,7 @@
+{
+  "// This is the JSON code for Zapier to convert SharePoint API URLs to Graph API format": "",
+  "// Input: SharePoint _api URL with decodedurl parameter": "",
+  "// Output: Direct folder URL for Microsoft Graph API": "",
+  
+  "convertedUrl": "{{replace(extractBetween(inputUrl, \"decodedurl='\", \"')\"), \" \", \"%20\")}}"
+}
