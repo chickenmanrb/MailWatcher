@@ -13,6 +13,8 @@
     "manual:dealroom": "tsx src/manual/manualForm.ts --universal-dealroom",
     "manual:jll": "tsx src/manual/manualForm.ts --jll",
     "queue:clear": "tsx scripts/clearQueue.ts",
+    "purge:idemp": "tsx scripts/purgeIdempotency.ts",
+    "func:prep": "npm run build && tsx scripts/funcPrep.ts",
     "manual:d2d": "tsx src/manual/d2d.ts",
     "e2e:dealroom": "npx playwright test e2e/dealroom.spec.ts",
     "mcp:playwright": "npx @playwright/mcp@latest",
@@ -21,6 +23,7 @@
   "dependencies": {
     "@azure/storage-queue": "^12.15.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@azure/storage-blob": "^12.23.0",
     "@notionhq/client": "^2.2.14",
     "adm-zip": "^0.5.12",
     "dotenv": "^16.4.5",
