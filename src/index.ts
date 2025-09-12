@@ -70,7 +70,14 @@ async function run(job: DealIngestionJob, options: RunOptions = {}) {
     if (entryKind) {
       console.log(`RCM Entry Kind: ${entryKind}`);
     }
-    const receipt = await writeAudit(workingDir, { job, detection, downloadedRoot, rcm_entry_kind: entryKind, upload_receipts: receipts });
+    // Optional Stagehand stats
+    let stagehandStats: any | undefined;
+    try {
+      const p = path.join(workingDir, 'stagehand-stats.json');
+      stagehandStats = JSON.parse(await fs.readFile(p, 'utf8'));
+    } catch {}
+
+    const receipt = await writeAudit(workingDir, { job, detection, downloadedRoot, rcm_entry_kind: entryKind, stagehand_stats: stagehandStats, upload_receipts: receipts });
     await zipArtifacts(workingDir);
     console.log(JSON.stringify({ ok: true, receipt }, null, 2));
     

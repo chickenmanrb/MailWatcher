@@ -1,5 +1,7 @@
 import type { Page } from 'playwright';
 import { clickDownloadAll, enumerateFileLinks } from '../browser/download.js';
+import { fillFieldSmart, type FallbackRunContext } from './smartStep.js';
+import { stagehandFallback, hostFromUrl } from '../config/stagehandFallback.js';
 import type { DealIngestionJob } from '../types.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -18,8 +20,17 @@ export async function handleGeneric(page: Page, ctx: { job: DealIngestionJob; wo
   // Take screenshot before any interaction
   await page.screenshot({ path: 'runs/generic-before-interaction.png' }).catch(()=>{});
 
+  // Stagehand fallback context (gated by per-host config inside helpers)
+  const host = hostFromUrl(page.url());
+  const cfg = stagehandFallback[host];
+  const shCtx: FallbackRunContext = {
+    stepsUsed: 0,
+    maxSteps: cfg?.maxFallbackStepsPerRun ?? 3,
+    artifactsDir: path.join(ctx.workingDir, 'stagehand')
+  };
+
   // Handle user info form if present
-  await handleUserInfoForm(page);
+  await handleUserInfoForm(page, shCtx);
 
   // Handle checkboxes and agreements
   console.log('Generic Handler: Looking for checkboxes and agreements...');
@@ -59,10 +70,22 @@ export async function handleGeneric(page: Page, ctx: { job: DealIngestionJob; wo
     throw e;
   });
 
+  // Write minimal Stagehand stats for audit consumption
+  try {
+    const statsPath = path.join(ctx.workingDir, 'stagehand-stats.json');
+    await fs.writeFile(statsPath, JSON.stringify({
+      host,
+      enabled: Boolean(cfg?.enabled),
+      steps_used: shCtx.stepsUsed,
+      max_steps: shCtx.maxSteps,
+      artifactsDir: shCtx.artifactsDir
+    }, null, 2), 'utf8');
+  } catch {}
+
   return outDir;
 }
 
-async function handleUserInfoForm(page: Page) {
+async function handleUserInfoForm(page: Page, shCtx?: FallbackRunContext) {
   console.log('Generic Handler: Checking for user info form...');
   
   const formFields = [
@@ -133,6 +156,29 @@ async function handleUserInfoForm(page: Page) {
   if (filledAnyField) {
     console.log('Generic Handler: Form filled, checking for required checkboxes...');
     await handleFormCheckboxes(page);
+  } else {
+    // Deterministic did not confidently fill anything; try targeted Stagehand fallbacks for common fields
+    try {
+      const candidates: Array<[string, string]> = [
+        ['Email', process.env.USER_EMAIL || 'test@example.com'],
+        ['First Name', process.env.USER_FIRST_NAME || 'Test'],
+        ['Last Name', process.env.USER_LAST_NAME || 'User'],
+        ['Company', process.env.COMPANY_NAME || process.env.USER_COMPANY || 'Example Company LLC'],
+        ['Phone', process.env.USER_PHONE || '(555) 123-4567']
+      ];
+      for (const [label, value] of candidates) {
+        try {
+          const res = await fillFieldSmart(page, label, value, shCtx ? { ctx: shCtx } : undefined);
+          if (res?.method === 'deterministic' || res?.method === 'stagehand') {
+            filledAnyField = true;
+          }
+        } catch {}
+      }
+      if (filledAnyField) {
+        console.log('Generic Handler: Stagehand fallback filled at least one field, checking form checkboxes...');
+        await handleFormCheckboxes(page);
+      }
+    } catch {}
   }
 }
 
