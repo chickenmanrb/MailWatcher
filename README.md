@@ -39,7 +39,11 @@ Environment variable alternatives:
 - Webhook server: `npm run webhook`
 - Worker: `npm run worker` (local dev or fallback; prefer the Azure Functions queue trigger in production to avoid polling costs)
 - Functions prep (build + copy dist): `npm run func:prep`
-- E2E dealroom test: `npm run e2e:dealroom`
+- Functions local start (Core Tools): `npm run func:start`
+- Functions publish (env or arg): `AZURE_FUNCTIONAPP_NAME=<app> npm run func:publish` or `npm run func:publish -- <app>`
+- Functions settings validate (Azure CLI): `AZURE_RESOURCE_GROUP=<rg> AZURE_FUNCTIONAPP_NAME=<app> npm run func:validate` or `npm run func:validate -- <app> --resource-group <rg>`
+  - The validator prints the subscription and resource group used; pass `--subscription` or set `AZURE_SUBSCRIPTION` to override.
+ - E2E dealroom test: `npm run e2e:dealroom`
 
 ## Manual Testing
 
@@ -182,8 +186,11 @@ Manual Flow Syntax
   - `npm run build` at repo root to generate `dist/`.
   - Or run: `npm run func:prep` (builds and copies `dist/` to `functions/dist`).
 - Publish the Function App
-  - From `functions/`: `func azure functionapp publish <YOUR_FUNCTION_APP_NAME>`.
+  - From `functions/`: `func azure functionapp publish <YOUR_FUNCTION_APP_NAME>` or `AZURE_FUNCTIONAPP_NAME=<app> npm run func:publish`.
   - This deploys both `functions/webhook` and `functions/queueRunner`.
+- Validate production settings
+  - With Azure CLI: `AZURE_RESOURCE_GROUP=<rg> AZURE_FUNCTIONAPP_NAME=<app> npm run func:validate`
+  - Optional: add `AZURE_SUBSCRIPTION=<sub-id>` or pass `--subscription` argument.
 - Configure app settings (Azure Portal or CLI)
   - Storage: `AzureWebJobsStorage` (usually auto‑configured by Azure).
   - Graph/SharePoint: `SP_HOSTNAME`, `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`.
@@ -193,8 +200,25 @@ Manual Flow Syntax
   - Stop the legacy process (PM2/systemd/Docker) or set `WORKER_DISABLED=true` to make the worker exit immediately.
   - The queue trigger will now process jobs automatically as messages arrive on `mailwatcher-jobs`.
 - Local testing (Functions Core Tools)
-  - `npm run func:prep && cd functions && func start`
+  - `npm run func:start` (preflight: checks `func` installed and validates required settings)
+  - Create `functions/local.settings.json` if missing (see sample `functions/local.settings.sample.json`).
+  - Using Azurite locally: set `AzureWebJobsStorage` to `UseDevelopmentStorage=true` and ensure Azurite is running.
   - POST to `http://localhost:7071/api/webhook` with your payload; the queue trigger will fire locally.
+
+## Production Deployment Checklist
+
+- Build and publish
+  - `npm run func:publish` (or manual `func azure functionapp publish` after `npm run func:prep`).
+- App settings (in Azure)
+  - Required: `AzureWebJobsStorage`, `SP_HOSTNAME`, `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`.
+  - Optional: `WEBHOOK_SECRET`, `JOB_MAX_MS`, Stagehand envs.
+  - Validate with: `AZURE_RESOURCE_GROUP=<rg> AZURE_FUNCTIONAPP_NAME=<app> npm run func:validate`.
+- Cutover
+  - Stop legacy polling worker or set `WORKER_DISABLED=true`.
+  - Verify via webhook POST to the deployed URL; confirm queue trigger processes jobs.
+- Observability and cost
+  - App Insights: enable sampling and set a daily cap if needed.
+  - Storage Queue: event‑driven queue trigger eliminates idle polling transactions.
 
 ### Idempotency purge utility
 
