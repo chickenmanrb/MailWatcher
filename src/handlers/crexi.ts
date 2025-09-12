@@ -3,7 +3,7 @@ import { clickDownloadAll, enumerateFileLinks } from '../browser/download.js';
 import type { DealIngestionJob } from '../types.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fillFieldSmart, type FallbackRunContext } from './smartStep.js';
+import { fillFieldSmart, clickSubmitSmart, type FallbackRunContext } from './smartStep.js';
 import { makeStagehandContext, writeStagehandStats } from '../audit/stagehandStats.js';
 
 export async function handleCrexi(page: Page, ctx: { job: DealIngestionJob; workingDir: string; urls: string[] }) {
@@ -35,6 +35,8 @@ export async function handleCrexi(page: Page, ctx: { job: DealIngestionJob; work
   await clickIfExists(page, 'button:has-text("Accept")');
   await clickIfExists(page, 'button:has-text("I Agree"), button:has-text("Continue")');
   await clickIfExists(page, 'text=/Confidential/i');
+  // Stagehand submit fallback if deterministic clicks didn’t advance
+  try { await clickSubmitSmart(page, { ctx: shCtx }); } catch {}
   await page.waitForTimeout(2000); // Wait for navigation
 
   // Take screenshot after NDA

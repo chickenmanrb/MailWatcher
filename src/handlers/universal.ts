@@ -6,6 +6,8 @@ import { DownloadMonitor } from '../utils/downloadMonitor.js';
 import { FileSystemMonitor } from '../utils/fileSystemMonitor.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { clickSubmitSmart, type FallbackRunContext } from './smartStep.js';
+import { makeStagehandContext, writeStagehandStats } from '../audit/stagehandStats.js';
 
 type AutofillOptions = {
   aggressive?: boolean;      // also check non-required "agree/consent" boxes
@@ -108,6 +110,7 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
   const options: AutofillOptions = { ...DEFAULTS, ...opts };
   const outDir = path.join(ctx.workingDir, 'downloads');
   await fs.mkdir(outDir, { recursive: true });
+  const { ctx: shCtx, host, cfg } = makeStagehandContext(page, ctx.workingDir);
 
   const url = ctx.urls[0];
   console.log('Universal Handler: Navigating to:', url);
@@ -123,6 +126,8 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
   await clickCommon(page, ['button:has-text("I Agree")', 'button:has-text("Accept")', 'text=/Agree|Accept/i']);
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(ctx.workingDir, 'universal-after-consent.png') }).catch(() => {});
+  // Stagehand submit fallback after initial consent clicks
+  try { await clickSubmitSmart(page, { ctx: shCtx }); } catch {}
 
   // Try multi-step autofill/submit up to maxSteps
   for (let step = 0; step < (options.maxSteps || 1); step++) {
@@ -149,7 +154,11 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
 
     if (!options.submit) break;
 
-      const advanced = await tryAdvance(page);
+      let advanced = await tryAdvance(page);
+      if (!advanced) {
+        // Stagehand submit fallback when tryAdvance did not progress
+        try { await clickSubmitSmart(page, { ctx: shCtx }); advanced = true; } catch {}
+      }
       if (!advanced && !filledCount) {
         if (options.debug) console.log('Universal Handler: no advance and no fill; breaking');
         break; // nothing changed, stop looping
@@ -180,6 +189,8 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
   // Try find Documents area and download
   console.log('Universal Handler: Looking for Documents/Files section...');
   await gotoDocuments(activePage);
+  // Stagehand submit/navigation fallback if Documents tab did not appear via deterministic clicks
+  try { await clickSubmitSmart(activePage, { ctx: shCtx }); } catch {}
   await activePage.screenshot({ path: path.join(ctx.workingDir, 'universal-documents.png') }).catch(() => {});
   // RCM-style grids often require selecting files first
   await trySelectAllDocuments(activePage);
@@ -187,7 +198,7 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
 
   // Try the context-specific Download button (e.g., "Download (123 KB)")
   const selectedBundle = await clickDownloadSelected(activePage, outDir, undefined).catch(() => null);
-  if (selectedBundle) return outDir;
+  if (selectedBundle) { await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {}); return outDir; }
 
   // Otherwise try a visible "Download All" UI
   const archive = await clickDownloadAll(activePage, [
@@ -195,13 +206,14 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
     'a:has-text("Download All")',
     'button[title*="Download All"]',
   ], outDir).catch(() => null);
-  if (archive) return outDir;
+  if (archive) { await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {}); return outDir; }
 
   await enumerateFileLinks(activePage, [
     'a[href*="download"]',
     'a:has-text("Download")',
     'a[href$=".pdf"], a[href$=".zip"], a[href$=".xlsx"], a[href$=".docx"]',
   ], outDir).catch(() => {});
+  await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {});
   return outDir;
 }
 
@@ -211,6 +223,7 @@ export async function handleUniversal(page: Page, ctx: { job: DealIngestionJob; 
 export async function handleUniversalDealroom(page: Page, ctx: { job: DealIngestionJob; workingDir: string; urls: string[]; downloadsPath?: string }): Promise<string> {
   const outDir = path.join(ctx.workingDir, 'downloads');
   await fs.mkdir(outDir, { recursive: true });
+  const { ctx: shCtx, host, cfg } = makeStagehandContext(page, ctx.workingDir);
 
   const url = ctx.urls[0];
   console.log('Universal Dealroom: Navigating to:', url);
@@ -234,6 +247,8 @@ export async function handleUniversalDealroom(page: Page, ctx: { job: DealIngest
   // Navigate to Documents/Files
   console.log('Universal Dealroom: Looking for Documents/Files section...');
   await gotoDocuments(activePage);
+  // Stagehand submission/navigation fallback if deterministic Documents clicks fail
+  try { await clickSubmitSmart(activePage, { ctx: shCtx }); } catch {}
   await activePage.screenshot({ path: path.join(ctx.workingDir, 'universal-dr-02a-before-select.png') }).catch(() => {});
   await activePage.waitForLoadState('networkidle').catch(() => {});
   await activePage.screenshot({ path: path.join(ctx.workingDir, 'universal-dr-03-documents.png') }).catch(() => {});
@@ -243,7 +258,7 @@ export async function handleUniversalDealroom(page: Page, ctx: { job: DealIngest
   await activePage.screenshot({ path: path.join(ctx.workingDir, 'universal-dr-03a-selected.png') }).catch(() => {});
 
   const selectedBundle = await clickDownloadSelected(activePage, outDir, ctx.downloadsPath).catch(() => null);
-  if (selectedBundle) return outDir;
+  if (selectedBundle) { await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {}); return outDir; }
 
   // Try Download All then fallback to enumerating file links
   const archive = await clickDownloadAll(activePage, [
@@ -251,13 +266,14 @@ export async function handleUniversalDealroom(page: Page, ctx: { job: DealIngest
     'a:has-text("Download All")',
     'button[title*="Download All"]',
   ], outDir).catch(() => null);
-  if (archive) return outDir;
+  if (archive) { await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {}); return outDir; }
 
   await enumerateFileLinks(activePage, [
     'a[href*="download"]',
     'a:has-text("Download")',
     'a[href$=".pdf"], a[href$=".zip"], a[href$=".xlsx"], a[href$=".docx"]',
   ], outDir).catch(() => {});
+  await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {});
   return outDir;
 }
 
