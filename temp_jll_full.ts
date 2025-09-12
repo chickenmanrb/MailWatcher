@@ -2,8 +2,6 @@ import type { Page } from 'playwright';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { DealIngestionJob } from '../types.js';
-import { fillFieldSmart, clickSubmitSmart, type FallbackRunContext } from './smartStep.js';
-import { makeStagehandContext, writeStagehandStats } from '../audit/stagehandStats.js';
 import { FileSystemMonitor } from '../utils/fileSystemMonitor.js';
 import { DownloadMonitor } from '../utils/downloadMonitor.js';
 
@@ -33,9 +31,6 @@ export async function handleJll(page: Page, ctx: HandlerCtx): Promise<string> {
   await page.waitForLoadState('networkidle').catch(() => {});
   await safeShot(page, path.join(ctx.workingDir, 'jll-01-loaded.png'));
 
-  // Stagehand fallback context (per-host gated)
-  const { ctx: shCtx, host, cfg } = makeStagehandContext(page, ctx.workingDir);
-
   // 1) Ensure login
   await ensureLogin(page, ctx);
   await page.waitForLoadState('networkidle').catch(() => {});
@@ -63,15 +58,6 @@ export async function handleJll(page: Page, ctx: HandlerCtx): Promise<string> {
   ]);
   const alt = await captureAnyDownload(page, ctx, outDir).catch(() => null);
   if (alt) return outDir;
-
-  // Stagehand fallback: if deterministic clicks failed, try smart submit
-  try {
-    await clickSubmitSmart(page, { ctx: shCtx });
-  } catch {}
-  const afterSh = await captureAnyDownload(page, ctx, outDir).catch(() => null);
-  if (afterSh) return outDir;
-  // Write minimal Stagehand stats for audit
-  await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {});
 
   return outDir; // return directory even if empty for uniformity
 }
@@ -390,3 +376,4 @@ async function tryClickAny(page: Page, selectors: string[]) {
 async function safeShot(page: Page, filePath: string) {
   try { await page.screenshot({ path: filePath, fullPage: true }); } catch {}
 }
+

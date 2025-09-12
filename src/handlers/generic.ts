@@ -1,7 +1,7 @@
 import type { Page } from 'playwright';
 import { clickDownloadAll, enumerateFileLinks } from '../browser/download.js';
 import { fillFieldSmart, type FallbackRunContext } from './smartStep.js';
-import { stagehandFallback, hostFromUrl } from '../config/stagehandFallback.js';
+import { makeStagehandContext, writeStagehandStats } from '../audit/stagehandStats.js';
 import type { DealIngestionJob } from '../types.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -21,13 +21,7 @@ export async function handleGeneric(page: Page, ctx: { job: DealIngestionJob; wo
   await page.screenshot({ path: 'runs/generic-before-interaction.png' }).catch(()=>{});
 
   // Stagehand fallback context (gated by per-host config inside helpers)
-  const host = hostFromUrl(page.url());
-  const cfg = stagehandFallback[host];
-  const shCtx: FallbackRunContext = {
-    stepsUsed: 0,
-    maxSteps: cfg?.maxFallbackStepsPerRun ?? 3,
-    artifactsDir: path.join(ctx.workingDir, 'stagehand')
-  };
+  const { ctx: shCtx, host, cfg } = makeStagehandContext(page, ctx.workingDir);
 
   // Handle user info form if present
   await handleUserInfoForm(page, shCtx);
@@ -71,16 +65,7 @@ export async function handleGeneric(page: Page, ctx: { job: DealIngestionJob; wo
   });
 
   // Write minimal Stagehand stats for audit consumption
-  try {
-    const statsPath = path.join(ctx.workingDir, 'stagehand-stats.json');
-    await fs.writeFile(statsPath, JSON.stringify({
-      host,
-      enabled: Boolean(cfg?.enabled),
-      steps_used: shCtx.stepsUsed,
-      max_steps: shCtx.maxSteps,
-      artifactsDir: shCtx.artifactsDir
-    }, null, 2), 'utf8');
-  } catch {}
+  await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {});
 
   return outDir;
 }

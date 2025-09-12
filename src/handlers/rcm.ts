@@ -10,6 +10,8 @@ import { clickDownloadAll, enumerateFileLinks } from '../browser/download.js';
 import type { DealIngestionJob } from '../types.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { fillFieldSmart, type FallbackRunContext } from './smartStep.js';
+import { makeStagehandContext, writeStagehandStats } from '../audit/stagehandStats.js';
 
 type RcmEntryKind = 'RCM_ENTRY_SAL_JAFAR' | 'RCM_ENTRY_MAIN_CA' | 'RCM_ENTRY_GET_ACCESS';
 
@@ -28,6 +30,9 @@ export async function handleRcm(page: Page, ctx: { job: DealIngestionJob; workin
 
   // Take screenshot before any interaction
   await page.screenshot({ path: 'runs/rcm-before-interaction.png' }).catch(()=>{});
+
+  // Stagehand fallback context (per-host gated) for this run
+  const { ctx: shCtx, host, cfg } = makeStagehandContext(page, ctx.workingDir);
 
   // STEP 1: Check for Sal Jafar user selection FIRST
   let entryKind: RcmEntryKind = 'RCM_ENTRY_MAIN_CA';
@@ -67,7 +72,7 @@ export async function handleRcm(page: Page, ctx: { job: DealIngestionJob; workin
   console.log('RCM Handler: Entry kind =', entryKind);
 
   // STEP 2: Handle user info form if present
-  await handleUserInfoForm(page);
+  await handleUserInfoForm(page, shCtx);
   
   // STEP 3: Handle checkboxes (avoiding 1031 exchange) once more, just in case
   console.log('RCM Handler: Looking for checkboxes to check...');
@@ -92,7 +97,10 @@ export async function handleRcm(page: Page, ctx: { job: DealIngestionJob; workin
     'button[title*="Download All"]'
   ], outDir).catch(() => null);
 
-  if (archive) return outDir;
+  if (archive) {
+    await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {});
+    return outDir;
+  }
 
   console.log('RCM Handler: Attempting to enumerate file links...');
   await enumerateFileLinks(page, [
@@ -106,6 +114,7 @@ export async function handleRcm(page: Page, ctx: { job: DealIngestionJob; workin
     console.log('RCM Handler: Failed to enumerate files, error:', e.message);
     throw e;
   });
+  await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {});
   return outDir;
 }
 
@@ -179,7 +188,7 @@ async function handleSalJafarSelection(page: Page): Promise<boolean> {
   return false;
 }
 
-async function handleUserInfoForm(page: Page) {
+async function handleUserInfoForm(page: Page, shCtx?: FallbackRunContext) {
   console.log('RCM Handler: Checking for user info form...');
   
   // Look for common form fields with case-insensitive matching
@@ -306,6 +315,27 @@ async function handleUserInfoForm(page: Page) {
     }
   }
   
+  if (!filledAnyField && shCtx) {
+    // Deterministic did not fill anything; attempt Stagehand fallback for common fields
+    try {
+      const candidates: Array<[string, string]> = [
+        ['Email', process.env.USER_EMAIL || 'test@example.com'],
+        ['First Name', process.env.USER_FIRST_NAME || 'Test'],
+        ['Last Name', process.env.USER_LAST_NAME || 'User'],
+        ['Company', process.env.USER_COMPANY || process.env.COMPANY || 'Example Company LLC'],
+        ['Phone', process.env.USER_PHONE || '(555) 123-4567']
+      ];
+      for (const [label, value] of candidates) {
+        try {
+          const res = await fillFieldSmart(page, label, value, { ctx: shCtx });
+          if (res?.method === 'deterministic' || res?.method === 'stagehand') {
+            filledAnyField = true;
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
   // Always check form checkboxes even if fields were prefilled
   console.log('RCM Handler: Checking required form checkboxes...');
   await handleFormCheckboxes(page);

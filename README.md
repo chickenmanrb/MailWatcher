@@ -111,8 +111,16 @@ Manual Flow Syntax
 - Environment
 
   - Credentials: set `JLL_USERNAME` or `JLL_EMAIL`, and `JLL_PASSWORD`.
-  - E‑sign fields (optional): `JLL_ESIGN_NAME`, `JLL_TITLE`, `JLL_COMPANY`.
+  - E-sign fields (optional): `JLL_ESIGN_NAME`, `JLL_TITLE`, `JLL_COMPANY`.
   - Optional flags: `JLL_SKIP_LOGIN=true`, `JLL_SKIP_ESIGN=true`.
+  
+## Stagehand Fallback
+
+- Purpose: targeted AI assist when deterministic selectors fail, gated per-domain.
+- Config: edit `src/config/stagehandFallback.ts` to enable hosts and set budgets.
+- Env: set `STAGEHAND_GLOBAL_DISABLE=false` (kill switch), `STAGEHAND_ENV`, `STAGEHAND_VERBOSE`, `STAGEHAND_ENABLE_CACHE`, and provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+- Usage: handlers call `fillFieldSmart`/`clickSubmitSmart` only after deterministic attempts miss; artifacts saved under `runs/<task>/stagehand/`.
+- Audit: `stagehand-stats.json` is included in the job audit when present.
 - Manual run
 
   - `npm run manual:jll -- --url="https://invest.jll.com/us/en/listings/.../esign-ca"`

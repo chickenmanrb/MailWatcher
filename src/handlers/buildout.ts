@@ -3,6 +3,8 @@ import { clickDownloadAll, enumerateFileLinks } from '../browser/download.js';
 import type { DealIngestionJob } from '../types.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fillFieldSmart, type FallbackRunContext } from './smartStep.js';
+import { makeStagehandContext, writeStagehandStats } from '../audit/stagehandStats.js';
 
 export async function handleBuildout(page: Page, ctx: { job: DealIngestionJob; workingDir: string; urls: string[] }) {
   console.log('Buildout Handler: Processing URLs:', ctx.urls);
@@ -21,8 +23,9 @@ export async function handleBuildout(page: Page, ctx: { job: DealIngestionJob; w
   // Take screenshot before any interaction
   await page.screenshot({ path: 'runs/buildout-before-interaction.png' }).catch(()=>{});
 
-  // 2) Handle user info form if present
-  await handleUserInfoForm(page);
+  // 2) Handle user info form if present (with Stagehand fallback context)
+  const { ctx: shCtx, host, cfg } = makeStagehandContext(page, ctx.workingDir);
+  await handleUserInfoForm(page, shCtx);
 
   // 3) Handle checkboxes and NDA flows
   console.log('Buildout Handler: Looking for checkboxes and agreements...');
@@ -53,7 +56,10 @@ export async function handleBuildout(page: Page, ctx: { job: DealIngestionJob; w
     'button[title*="Download All"]'
   ], outDir).catch(() => null);
 
-  if (archive) return outDir;
+  if (archive) {
+    await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {});
+    return outDir;
+  }
 
   // 7) Fallback: enumerate file links in a documents grid/list
   console.log('Buildout Handler: Attempting to enumerate file links...');
@@ -66,10 +72,11 @@ export async function handleBuildout(page: Page, ctx: { job: DealIngestionJob; w
     throw e;
   });
 
+  await writeStagehandStats(ctx.workingDir, host, cfg, shCtx).catch(() => {});
   return outDir;
 }
 
-async function handleUserInfoForm(page: Page) {
+async function handleUserInfoForm(page: Page, shCtx?: FallbackRunContext) {
   console.log('Buildout Handler: Checking for user info form...');
   
   const formFields = [
@@ -140,6 +147,29 @@ async function handleUserInfoForm(page: Page) {
   if (filledAnyField) {
     console.log('Buildout Handler: Form filled, checking for required checkboxes...');
     await handleFormCheckboxes(page);
+  } else if (shCtx) {
+    // Deterministic did not fill; try targeted Stagehand fields
+    try {
+      const candidates: Array<[string, string]> = [
+        ['Email', process.env.USER_EMAIL || 'test@example.com'],
+        ['First Name', process.env.USER_FIRST_NAME || 'Test'],
+        ['Last Name', process.env.USER_LAST_NAME || 'User'],
+        ['Company', process.env.COMPANY_NAME || process.env.USER_COMPANY || 'Example Company LLC'],
+        ['Phone', process.env.USER_PHONE || '(555) 123-4567']
+      ];
+      for (const [label, value] of candidates) {
+        try {
+          const res = await fillFieldSmart(page, label, value, { ctx: shCtx });
+          if (res?.method === 'deterministic' || res?.method === 'stagehand') {
+            filledAnyField = true;
+          }
+        } catch {}
+      }
+      if (filledAnyField) {
+        console.log('Buildout Handler: Stagehand fallback filled at least one field, checking form checkboxes...');
+        await handleFormCheckboxes(page);
+      }
+    } catch {}
   }
 }
 
