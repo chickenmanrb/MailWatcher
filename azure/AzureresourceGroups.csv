@@ -1,0 +1,4 @@
+﻿NAME,SUBSCRIPTION,LOCATION,
+"DefaultResourceGroup-CUS","Azure subscription 1","Central US"
+"MailWatcher-Webhook_group","Azure subscription 1","Central US"
+"rg-mailwatcher-webhook","Azure subscription 1","East US"

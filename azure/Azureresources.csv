@@ -1,0 +1,8 @@
+﻿NAME,TYPE,LOCATION,
+"Application Insights Smart Detection","Action group","Global"
+"ASP-MailWatcherWebhookgroup-be91","App Service plan","Central US"
+"MailWatcher-Webh-id-8b7b","Managed Identity","Central US"
+"MailWatcher-Webhook","Function App","Central US"
+"MailWatcher-Webhook","Application Insights","Central US"
+"MailWatcher-Webhook-apim","API Management service","Central US"
+"mailwatcherweb19952673","Storage account","Central US"
