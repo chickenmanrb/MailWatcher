@@ -48,3 +48,7 @@ to-do-list.md
 # Local form data (keep secrets out of git)
 formdata.md
 nul
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md

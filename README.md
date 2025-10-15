@@ -17,6 +17,23 @@ Examples:
 
 You can pass args as `--key=value` or `--key value`.
 
+## End-to-End Walkthrough (A → Z)
+
+1. **A webhook call (or CLI command) kicks things off.** Zapier or another integration submits JSON to the Azure Function at `/api/webhook`, or you run `npm run dev <job.json>` / `npm run manual:*`. Every entry point loads `.env` so connection strings, SharePoint hostnames, and credentials are available.
+2. **The webhook guards the door.** `functions/webhook/index.js` accepts the payload, handles optional Microsoft Graph validation tokens, and verifies the `x-zapier-secret` header when `WEBHOOK_SECRET` is set. It normalizes the input into a `DealIngestionJob` (task name, SharePoint path, deal room URLs, optional Notion page ID or email body).
+3. **Duplicate jobs are filtered.** Before enqueuing anything, the webhook writes a tiny marker blob (`idempotency/<hash>.json`) into the Storage account `mailwatcherweb19952673`. If that blob already exists within the `IDEMP_HOURS` window, the function returns `202 duplicate` and stops so the queue stays clean.
+4. **A message lands on the queue.** New jobs are serialized to JSON and queued on `mailwatcher-jobs` in the same Storage account. Cloud deployments rely on the Function App binding; local development can hit the queue by exporting `AZURE_STORAGE_CONNECTION_STRING` and `JOB_QUEUE_NAME`.
+5. **Workers pull work in two ways.**
+   - In Azure, the `queueRunner` Function triggers automatically when a message appears and loads the compiled runtime from `functions/dist/src/index.js`.
+   - Locally, `npm run worker` uses `QueueClient` to poll the same queue with adaptive backoff. If `WORKER_DISABLED=true`, the polling process exits so the serverless trigger can run solo.
+6. **`run()` orchestrates each job.** Both cloud and local workers call `src/index.ts::run(job)`. The function optionally looks up an NDA link from Notion, collects every candidate URL (NDA link, deal link, links scraped from the source email), and timestamps a working directory under `runs/<epoch>-<task>` to store artifacts.
+7. **Platform detection chooses automation strategy.** `detectPlatform()` inspects hostnames/patterns and returns one of the dedicated handlers (`buildout`, `crexi`, `rcm`, `jll`) or falls back to `generic`/`universal`. You can force the universal handler with `USE_UNIVERSAL_DEFAULT=true` or by passing `--universal` on the CLI.
+8. **A Playwright browser session spins up.** `createBrowserContext()` launches Chromium (headless unless `KEEP_BROWSER_OPEN=true`), reuses persisted cookies from `.auth/<domain>.json`, and enables downloads. The chosen handler drives the site: logs in, accepts NDAs, finds the document list, and lets the download monitors capture files under `runs/.../downloads`.
+9. **SharePoint upload happens after downloads settle.** `uploadFolderToSharePointByPath()` authenticates against Microsoft Graph with the app credentials from `.env`, ensures the server-relative folder exists, and streams each downloaded file into the SharePoint library. Paths, item IDs, and web URLs are captured for auditing.
+10. **Auditing packages the run.** `writeAudit()` writes a JSON receipt with the job metadata, detection result, SharePoint upload receipts, optional Stagehand stats, and any handler markers (for example `rcm-entry.txt`). `zipArtifacts()` then bundles screenshots, logs, and receipts into `runs/.../artifacts.zip` for traceability.
+11. **Cleanup and completion.** On success, the worker deletes the queue message so Azure will not retry. Unless `KEEP_BROWSER_OPEN=true`, the Playwright context closes, saving refreshed auth state back to `.auth/`. Failures bubble up so the queue message becomes visible again for the next retry window.
+12. **Manual utilities plug into the same pipeline.** Commands like `npm run manual:d2d` or `npm run dev '{"task_name":"Test"}'` bypass the queue but still feed jobs to `run()`, so they share the same detection, automation, upload, and audit logic while letting you test specific URLs offline.
+
 ## Required Arguments
 
 - `--url` Deal room entry URL
@@ -38,12 +55,23 @@ Environment variable alternatives:
 - Type-check/build: `npm run build`
 - Webhook server: `npm run webhook`
 - Worker: `npm run worker` (local dev or fallback; prefer the Azure Functions queue trigger in production to avoid polling costs)
-- Functions prep (build + copy dist): `npm run func:prep`
-- Functions local start (Core Tools): `npm run func:start`
-- Functions publish (env or arg): `AZURE_FUNCTIONAPP_NAME=<app> npm run func:publish` or `npm run func:publish -- <app>`
-- Functions settings validate (Azure CLI): `AZURE_RESOURCE_GROUP=<rg> AZURE_FUNCTIONAPP_NAME=<app> npm run func:validate` or `npm run func:validate -- <app> --resource-group <rg>`
-  - The validator prints the subscription and resource group used; pass `--subscription` or set `AZURE_SUBSCRIPTION` to override.
- - E2E dealroom test: `npm run e2e:dealroom`
+
+## Azure Deployment
+
+- **Linked resources:** The repository deploys to the Function App `MailWatcher-Webhook` in resource group `MailWatcher-Webhook_group` (Central US). Supporting resources include the App Service plan `ASP-MailWatcherWebhookgroup-be91`, managed identity `MailWatcher-Webh-id-8b7b`, and an Application Insights Smart Detection instance. Resource inventories are tracked under `azure/Azureresources.csv`.
+- **Storage account:** All Azure Storage interactions use account `mailwatcherweb19952673`. The storage connection string lives in `.env` as `AZURE_STORAGE_CONNECTION_STRING` (mirrored by `AzureWebJobsStorage` in the Function App configuration). Keep this value secret; it grants queue and blob access.
+- **Queue wiring:** Both the HTTP `webhook` function (`functions/webhook`) and the queue-triggered `queueRunner` function (`functions/queueRunner`) target the Storage Queue `mailwatcher-jobs`. The queue name is also surfaced locally via `JOB_QUEUE_NAME` so the worker CLI and cloud functions stay in sync.
+- **Publish workflow:**
+  1. `npm run build` to emit `dist/`.
+  2. `npm run func:prep` to copy the compiled output into `functions/dist` for the Function App.
+  3. `npm run func:publish -- --name MailWatcher-Webhook` (or set `AZURE_FUNCTIONAPP_NAME`) to run `func azure functionapp publish` with the Azure Functions Core Tools.
+  4. The archive `func-correct.zip` in the repo root is the latest packaged drop; regenerate it with the publish script after code changes to avoid drift.
+- **Operational notes:** Use `az login` (Azure CLI) to inspect production queues (`az storage queue show --name mailwatcher-jobs --connection-string ...`) or review deployment history. Rotate the storage connection string if the `.env` contents ever leak outside trusted machines.
+- **Core Tools helpers:**
+  - Prep (build + copy dist): `npm run func:prep`
+  - Local start: `npm run func:start`
+  - Publish: `AZURE_FUNCTIONAPP_NAME=<app> npm run func:publish` or `npm run func:publish -- <app>`
+  - Settings validator: `AZURE_RESOURCE_GROUP=<rg> AZURE_FUNCTIONAPP_NAME=<app> npm run func:validate` or `npm run func:validate -- <app> --resource-group <rg>` (set `AZURE_SUBSCRIPTION` or pass `--subscription` to override the default)
 
 ## Manual Testing
 
